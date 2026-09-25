@@ -9,8 +9,8 @@ import (
 )
 
 // messageMux serves the three endpoints `wagon message` calls for message
-// 01msg, and counts the calls per path.
-func messageMux(calls map[string]int) *http.ServeMux {
+// 01msg, with the given attachments, and counts the calls per path.
+func messageMux(calls map[string]int, attachments []map[string]any) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/messages/{id}", func(w http.ResponseWriter, r *http.Request) {
 		calls[r.URL.Path]++
@@ -22,6 +22,7 @@ func messageMux(calls map[string]int) *http.ServeMux {
 			"id": "01msg", "request_id": "req-1", "status": "delivered", "direction": "outbound",
 			"from": "noreply@example.com", "to": []string{"a@x.com", "b@y.com"}, "size": 1234,
 			"created_at": "2026-09-25T06:00:00Z", "updated_at": "2026-09-25T06:00:05Z",
+			"attachments": attachments,
 		})(w, r)
 	})
 	mux.HandleFunc("GET /api/v1/messages/{id}/deliveries", func(w http.ResponseWriter, r *http.Request) {
@@ -41,10 +42,17 @@ func messageMux(calls map[string]int) *http.ServeMux {
 	return mux
 }
 
+// testAttachments are one file an API send carried and one inbound part
+// depot found infected.
+var testAttachments = []map[string]any{
+	{"filename": "report.pdf", "content_type": "application/pdf", "size": 2048},
+	{"filename": "invoice.exe", "content_type": "application/octet-stream", "size": 999, "verdict": "infected"},
+}
+
 func TestRunMessage(t *testing.T) {
 	pki := mintClientCert(t)
 	calls := map[string]int{}
-	url, caFile := newTLSServer(t, messageMux(calls), pki.clientCAs)
+	url, caFile := newTLSServer(t, messageMux(calls, testAttachments), pki.clientCAs)
 
 	var stdout, stderr bytes.Buffer
 	if got := run(baseArgs(url, pki, caFile, "message", "01msg"), &stdout, &stderr); got != 0 {
@@ -52,6 +60,7 @@ func TestRunMessage(t *testing.T) {
 	}
 	for _, want := range []string{
 		"id:", "01msg", "a@x.com, b@y.com", "updated_at:", "2026-09-25T06:00:05Z", "first_opened_at:",
+		"FILENAME", "report.pdf", "application/pdf", "2048", "invoice.exe", "infected",
 		"deliveries:", "RECIPIENT", "250 ok",
 		"opens:", "OPENED_AT", "TestMail/1.0",
 	} {
@@ -68,7 +77,7 @@ func TestRunMessage(t *testing.T) {
 
 func TestRunMessageJSON(t *testing.T) {
 	pki := mintClientCert(t)
-	url, caFile := newTLSServer(t, messageMux(map[string]int{}), pki.clientCAs)
+	url, caFile := newTLSServer(t, messageMux(map[string]int{}, testAttachments), pki.clientCAs)
 
 	var stdout, stderr bytes.Buffer
 	if got := run(append([]string{"--json"}, baseArgs(url, pki, caFile, "message", "01msg")...), &stdout, &stderr); got != 0 {
@@ -84,6 +93,9 @@ func TestRunMessageJSON(t *testing.T) {
 	}
 	if report.Message["updated_at"] != "2026-09-25T06:00:05Z" {
 		t.Errorf("message = %v, want the GET /api/v1/messages/{id} body", report.Message)
+	}
+	if a, _ := report.Message["attachments"].([]any); len(a) != 2 {
+		t.Errorf("message attachments = %v, want the 2 files verbatim", report.Message["attachments"])
 	}
 	if d, _ := report.Deliveries["deliveries"].([]any); len(d) != 1 {
 		t.Errorf("deliveries = %v, want the deliveries response with 1 entry", report.Deliveries)
@@ -107,7 +119,7 @@ func TestRunMessageErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			calls := map[string]int{}
-			url, caFile := newTLSServer(t, messageMux(calls), pki.clientCAs)
+			url, caFile := newTLSServer(t, messageMux(calls, nil), pki.clientCAs)
 			var stdout, stderr bytes.Buffer
 			if got := run(baseArgs(url, pki, caFile, tt.args...), &stdout, &stderr); got != tt.exit {
 				t.Fatalf("run(%q) exit = %d, want %d; stderr = %s", tt.args, got, tt.exit, stderr.String())
@@ -120,4 +132,41 @@ func TestRunMessageErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRunMessageAttachmentCount checks the details line: the files listed, or
+// 0 when rail sends none or predates attachments (no field at all).
+func TestRunMessageAttachmentCount(t *testing.T) {
+	tests := []struct {
+		name        string
+		attachments []map[string]any
+		want        string
+	}{
+		{"two files", testAttachments, "2"},
+		{"no files", []map[string]any{}, "0"},
+		{"no field", nil, "0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pki := mintClientCert(t)
+			url, caFile := newTLSServer(t, messageMux(map[string]int{}, tt.attachments), pki.clientCAs)
+			var stdout, stderr bytes.Buffer
+			if got := run(baseArgs(url, pki, caFile, "message", "01msg"), &stdout, &stderr); got != 0 {
+				t.Fatalf("run(message) exit = %d, want 0; stderr = %s", got, stderr.String())
+			}
+			if got := kvValue(stdout.String(), "attachments"); got != tt.want {
+				t.Errorf("attachments: %q, want %q\n%s", got, tt.want, stdout.String())
+			}
+		})
+	}
+}
+
+// kvValue returns the value of key in renderKV output, or "" when absent.
+func kvValue(out, key string) string {
+	for line := range strings.Lines(out) {
+		if v, ok := strings.CutPrefix(line, key+":"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }

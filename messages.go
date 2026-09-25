@@ -88,6 +88,7 @@ type messageSummary struct {
 	Size          int      `json:"size"`
 	CreatedAt     string   `json:"created_at"`
 	FirstOpenedAt string   `json:"first_opened_at,omitempty"`
+	Attachments   int      `json:"attachments"`
 }
 
 // runMessagesList implements `wagon messages list`, a keyset page of the
@@ -144,10 +145,10 @@ func runMessagesList(c *client, args []string, out, stderr io.Writer) error {
 	for _, m := range resp.Messages {
 		rows = append(rows, []string{
 			m.ID, m.CreatedAt, m.Status, m.From,
-			orDash(strings.Join(m.To, ", ")), fmt.Sprintf("%d", m.Size),
+			orDash(strings.Join(m.To, ", ")), fmt.Sprintf("%d", m.Size), fmt.Sprintf("%d", m.Attachments),
 		})
 	}
-	renderTable(out, []string{"ID", "CREATED_AT", "STATUS", "FROM", "TO", "SIZE"}, rows)
+	renderTable(out, []string{"ID", "CREATED_AT", "STATUS", "FROM", "TO", "SIZE", "ATT"}, rows)
 	if resp.NextBefore != "" {
 		_, _ = fmt.Fprintf(out, "\nmore: wagon messages list --before %s\n", resp.NextBefore)
 	}
