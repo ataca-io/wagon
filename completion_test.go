@@ -33,7 +33,7 @@ func TestComplete(t *testing.T) {
 		words []string
 		want  []string
 	}{
-		{"no words", nil, []string{"auth", "completion", "forms", "messages", "send", "send-file", "test", "version", "whoami"}},
+		{"no words", nil, []string{"auth", "completion", "forms", "message", "messages", "send", "send-file", "test", "version", "whoami"}},
 		{"partial verb", []string{"s"}, []string{"send", "send-file"}},
 		{"messages subcommands", []string{"messages", ""}, []string{"deliveries", "list", "opens"}},
 		{"forms subcommands after --json", []string{"--json", "forms", ""}, []string{"create", "delete", "get", "list", "submissions", "update"}},

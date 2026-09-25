@@ -168,12 +168,16 @@ func runMessagesDeliveries(c *client, args []string, out io.Writer) error {
 	if c.jsonOut {
 		return printPretty(out, raw)
 	}
-	rows := make([][]string, 0, len(resp.Deliveries))
-	for _, d := range resp.Deliveries {
+	renderDeliveries(out, resp.Deliveries)
+	return nil
+}
+
+func renderDeliveries(out io.Writer, deliveries []recipientDelivery) {
+	rows := make([][]string, 0, len(deliveries))
+	for _, d := range deliveries {
 		rows = append(rows, []string{d.Recipient, d.Domain, d.Status, fmt.Sprintf("%d", d.Attempts), orDash(d.AttemptedAt), deliveryResponse(d), orDash(d.Note)})
 	}
 	renderTable(out, []string{"RECIPIENT", "DOMAIN", "STATUS", "ATTEMPTS", "ATTEMPTED_AT", "RESPONSE", "NOTE"}, rows)
-	return nil
 }
 
 func runMessagesOpens(c *client, args []string, out io.Writer) error {
@@ -190,12 +194,16 @@ func runMessagesOpens(c *client, args []string, out io.Writer) error {
 	if c.jsonOut {
 		return printPretty(out, raw)
 	}
-	rows := make([][]string, 0, len(resp.Opens))
-	for _, o := range resp.Opens {
+	renderOpens(out, resp.Opens)
+	return nil
+}
+
+func renderOpens(out io.Writer, opens []openEntry) {
+	rows := make([][]string, 0, len(opens))
+	for _, o := range opens {
 		rows = append(rows, []string{o.OpenedAt, orDash(o.SourceIP), orDash(o.UserAgent)})
 	}
 	renderTable(out, []string{"OPENED_AT", "SOURCE_IP", "USER_AGENT"}, rows)
-	return nil
 }
 
 // messageIDArg requires exactly one positional argument: the message id.
