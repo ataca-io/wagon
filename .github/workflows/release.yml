@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  # CI already runs the full -race suite on every merge to main. Instead of
+  # re-running it, require a completed, successful CI run on the tagged commit.
+  verify-ci:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Require green CI on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          # Wait up to 5 min in case the tag was cut right after the merge and
+          # CI is still running; then fail closed.
+          deadline=$((SECONDS + 300))
+          while :; do
+            verdict=$(gh api "repos/${{ github.repository }}/actions/runs?head_sha=${{ github.sha }}" \
+              --jq '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml")]
+                | if length == 0 then "missing"
+                  elif any(.status != "completed") then "running"
+                  elif all(.conclusion == "success") then "success"
+                  else "failed" end')
+            if [ "$verdict" = "success" ]; then
+              echo "CI is green on ${{ github.sha }}"
+              exit 0
+            fi
+            if [ "$verdict" = "running" ] && [ "$SECONDS" -lt "$deadline" ]; then
+              echo "CI still running on ${{ github.sha }}; waiting..."
+              sleep 30
+              continue
+            fi
+            echo "CI on ${{ github.sha }}: $verdict — refusing to release"
+            exit 1
+          done
+
+  build:
+    needs: verify-ci
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          LDFLAGS="-s -w -X github.com/ataca-io/wagon/internal/buildinfo.version=${{ github.ref_name }}"
+          go build -trimpath -ldflags="$LDFLAGS" -o wagon .
+
+      - name: Zip
+        run: zip wagon-${{ matrix.goos }}-${{ matrix.goarch }}.zip wagon
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wagon-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: wagon-${{ matrix.goos }}-${{ matrix.goarch }}.zip
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          files: artifacts/*.zip
+          generate_release_notes: true
