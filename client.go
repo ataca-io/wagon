@@ -31,6 +31,9 @@ type client struct {
 	// roots. Shared with the depot upload client (attach.go), which verifies
 	// depot's server certificate but sends no client certificate of its own.
 	caPool *x509.CertPool
+	// senders are the certificate's email SANs, the From addresses rail
+	// accepts for this client.
+	senders []string
 }
 
 // newClient loads the client certificate and optional CA, and builds the
@@ -66,7 +69,20 @@ func newClient(server, certFile, keyFile, caFile string, jsonOut bool) (*client,
 		http:    &http.Client{Timeout: clientTimeout, Transport: &http.Transport{TLSClientConfig: tlsCfg}},
 		jsonOut: jsonOut,
 		caPool:  caPool,
+		senders: cert.Leaf.EmailAddresses,
 	}, nil
+}
+
+// from returns the --from value, or the certificate's first sender when it
+// is empty, the same default rail's /api/v1/test applies.
+func (c *client) from(flagValue string) (string, error) {
+	if flagValue != "" {
+		return flagValue, nil
+	}
+	if len(c.senders) == 0 {
+		return "", &usageError{"--from is required: the client certificate has no sender address"}
+	}
+	return c.senders[0], nil
 }
 
 // errorResponse is the wire shape of every API error body: {"error","message"}.
@@ -196,7 +212,12 @@ func (c *client) do(method, path string, body, out any) ([]byte, error) {
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, newAPIError(resp.StatusCode, data)
+		apiErr := newAPIError(resp.StatusCode, data)
+		// rail's message names no address, so list the ones this certificate allows.
+		if apiErr.code == "sender_not_authorized" && len(c.senders) > 0 {
+			apiErr.message += " (allowed: " + strings.Join(c.senders, ", ") + ")"
+		}
+		return nil, apiErr
 	}
 	if out != nil && len(data) > 0 {
 		if err := json.Unmarshal(data, out); err != nil {

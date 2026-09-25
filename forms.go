@@ -256,7 +256,7 @@ func uploadFlagsSeen(seen map[string]bool) (bool, error) {
 func runFormsCreate(c *client, args []string, out, stderr io.Writer) error {
 	fs := flag.NewFlagSet("forms create", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	from := fs.String("from", "", "sender address, must be a cert email SAN (required)")
+	from := fs.String("from", "", "sender address, must be a cert email SAN (default: the certificate's first sender)")
 	ff := registerFormFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -269,14 +269,17 @@ func runFormsCreate(c *client, args []string, out, stderr io.Writer) error {
 	}
 
 	switch {
-	case *from == "":
-		return &usageError{"--from is required"}
 	case *ff.name == "":
 		return &usageError{"--name is required"}
 	case *ff.subject == "":
 		return &usageError{"--subject is required"}
 	case len(ff.to) == 0:
 		return &usageError{"at least one --to is required"}
+	}
+
+	sender, err := c.from(*from)
+	if err != nil {
+		return err
 	}
 
 	hasUploads, err := uploadFlagsSeen(visitedFlags(fs))
@@ -286,7 +289,7 @@ func runFormsCreate(c *client, args []string, out, stderr io.Writer) error {
 
 	req := formCreateRequest{
 		Name:           *ff.name,
-		From:           *from,
+		From:           sender,
 		To:             ff.to,
 		Subject:        *ff.subject,
 		RedirectURL:    *ff.redirect,

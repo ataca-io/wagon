@@ -89,6 +89,8 @@ func dispatch(c *client, verb string, args []string, stdout, stderr io.Writer) e
 		return runWhoami(c, args, stdout, stderr)
 	case "send":
 		return runSend(c, args, stdout, stderr)
+	case "send-file":
+		return runSendFile(c, args, stdout, stderr)
 	case "messages":
 		return runMessages(c, args, stdout, stderr)
 	case "forms":
@@ -102,7 +104,7 @@ func dispatch(c *client, verb string, args []string, stdout, stderr io.Writer) e
 
 func usage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "Usage: wagon [--server URL] [--cert FILE] [--key FILE] [--ca FILE] [--json] <verb> [args]")
-	_, _ = fmt.Fprintln(w, "Verbs: whoami, send, messages, forms, test, auth, version")
+	_, _ = fmt.Fprintln(w, "Verbs: whoami, send, send-file, messages, forms, test, auth, version")
 	_, _ = fmt.Fprintln(w, "Env fallbacks: RAIL_SERVER, RAIL_CERT, RAIL_KEY, RAIL_CA")
 	_, _ = fmt.Fprintln(w, "Defaults: --server "+defaultServer+", --cert and --key from ~/.wagon (see `wagon auth setup`)")
 }
