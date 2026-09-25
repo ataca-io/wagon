@@ -25,6 +25,13 @@ func main() {
 // to a process exit code. It never calls os.Exit itself, so tests can drive
 // it directly.
 func run(args []string, stdout, stderr io.Writer) int {
+	// The shell passes the raw words, global flags and half-typed flags
+	// included, so __complete runs before any flag parsing.
+	if len(args) > 0 && args[0] == "__complete" {
+		runComplete(args[1:], stdout)
+		return 0
+	}
+
 	fs := flag.NewFlagSet("wagon", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { usage(stderr) }
@@ -47,10 +54,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	verb, verbArgs := rest[0], rest[1:]
 
-	// Both verbs run without a server or a certificate.
+	// These verbs run without a server or a certificate.
 	switch verb {
 	case "version":
 		_, _ = fmt.Fprintln(stdout, buildinfo.String("wagon"))
+		return 0
+	case "completion":
+		if err := runCompletion(verbArgs, stdout); err != nil {
+			_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+			return exitCode(err)
+		}
 		return 0
 	case "auth":
 		if err := runAuth(verbArgs, stdout); err != nil {
@@ -104,7 +117,7 @@ func dispatch(c *client, verb string, args []string, stdout, stderr io.Writer) e
 
 func usage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "Usage: wagon [--server URL] [--cert FILE] [--key FILE] [--ca FILE] [--json] <verb> [args]")
-	_, _ = fmt.Fprintln(w, "Verbs: whoami, send, send-file, messages, forms, test, auth, version")
+	_, _ = fmt.Fprintln(w, "Verbs: whoami, send, send-file, messages, forms, test, auth, version, completion")
 	_, _ = fmt.Fprintln(w, "Env fallbacks: RAIL_SERVER, RAIL_CERT, RAIL_KEY, RAIL_CA")
 	_, _ = fmt.Fprintln(w, "Defaults: --server "+defaultServer+", --cert and --key from ~/.wagon (see `wagon auth setup`)")
 }

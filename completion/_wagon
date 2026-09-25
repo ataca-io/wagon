@@ -1,0 +1,19 @@
+#compdef wagon
+# zsh completion for wagon. Install into any directory on $fpath:
+#   wagon completion zsh > "${fpath[1]}/_wagon"
+
+_wagon() {
+	local -a out
+	out=(${(f)"$(command wagon __complete "${(@)words[2,CURRENT]}" 2>/dev/null)"})
+	if [[ ${out[1]} == :file ]]; then
+		_files
+		return
+	fi
+	(( ${#out} )) && compadd -a out
+}
+
+if [[ ${funcstack[1]} == _wagon ]]; then
+	_wagon "$@"
+else
+	compdef _wagon wagon
+fi
