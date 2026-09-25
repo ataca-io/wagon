@@ -36,7 +36,7 @@ wagon send-file --to user@example.com summary.pdf export.csv
 wagon test --to you@example.com                 # one-off test, sender from the cert
 wagon messages list                             # your own messages, newest first
 wagon messages list --status bounced --since 2026-09-01
-wagon message 01jx...                           # details, deliveries, and opens in one report
+wagon message 01jx...                           # details, attached files, deliveries, and opens
 wagon messages deliveries 01jx...               # every attempt on a message
 wagon messages opens 01jx...
 wagon forms list
@@ -47,6 +47,7 @@ wagon completion zsh                            # shell completion script, see b
 ```
 
 - `messages list` takes `--status`, `--from`, `--to`, `--since`, `--until`, and `--limit`. While more rows exist, it prints the `--before <next id>` command for the next page.
+- `messages list` shows each message's attachment count in the `ATT` column. `message <id>` lists the files by name, type, and size, with depot's scan verdict for an inbound part. rail records the files of API sends, inbound mail, and form submissions, not SMTP submissions.
 - `--from` is optional on `send`, `send-file`, and `forms create`. It defaults to the certificate's first sender.
 - A sender the certificate does not allow fails with the list of allowed senders.
 - `--to`, `--cc`, and `--attach-file` repeat.
