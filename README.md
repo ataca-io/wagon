@@ -68,6 +68,12 @@ wagon completion zsh > "${fpath[1]}/_wagon"
 wagon completion fish > ~/.config/fish/completions/wagon.fish
 ```
 
+Or load it from `~/.zshrc` at each shell start, as with `direnv` or `starship`. The line must come after `compinit`; with oh-my-zsh, after `source $ZSH/oh-my-zsh.sh`:
+
+```zsh
+command -v wagon >/dev/null && eval "$(wagon completion zsh)"
+```
+
 To try it in the current shell only:
 
 ```bash
