@@ -79,6 +79,12 @@ type messageListResponse struct {
 }
 
 type messageSummary struct {
+	messageFields
+	Attachments int `json:"attachments"`
+}
+
+// messageFields are the fields a list row and GET /api/v1/messages/{id} share.
+type messageFields struct {
 	ID            string   `json:"id"`
 	RequestID     string   `json:"request_id,omitempty"`
 	Status        string   `json:"status"`
@@ -88,7 +94,6 @@ type messageSummary struct {
 	Size          int      `json:"size"`
 	CreatedAt     string   `json:"created_at"`
 	FirstOpenedAt string   `json:"first_opened_at,omitempty"`
-	Attachments   int      `json:"attachments"`
 }
 
 // runMessagesList implements `wagon messages list`, a keyset page of the
