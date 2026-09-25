@@ -10,9 +10,8 @@ import (
 )
 
 // messageDetail mirrors httpd's messageDetail (GET /api/v1/messages/{id}).
-// Its attachments list shadows messageSummary's count of the same name.
 type messageDetail struct {
-	messageSummary
+	messageFields
 	UpdatedAt   string              `json:"updated_at"`
 	Attachments []messageAttachment `json:"attachments"`
 }
@@ -78,7 +77,7 @@ func runMessage(c *client, args []string, out io.Writer) error {
 		{"updated_at", msg.UpdatedAt},
 		{"first_opened_at", orDash(msg.FirstOpenedAt)},
 	})
-	_, _ = fmt.Fprintln(out, "\nattachments:")
+	_, _ = fmt.Fprintln(out, "\nfiles:")
 	renderAttachments(out, msg.Attachments)
 	_, _ = fmt.Fprintln(out, "\ndeliveries:")
 	renderDeliveries(out, deliveries.Deliveries)

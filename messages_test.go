@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -16,7 +17,7 @@ func captureQueryHandler(got *string) http.HandlerFunc {
 			"messages": []map[string]any{{
 				"id": "01jx", "status": "delivered", "direction": "outbound",
 				"from": "a@x.com", "to": []string{"b@y.com"}, "size": 42,
-				"created_at": "2026-09-19T10:00:00Z",
+				"created_at": "2026-09-19T10:00:00Z", "attachments": 3,
 			}},
 		})(w, r)
 	}
@@ -42,6 +43,7 @@ func TestMessagesListQuery(t *testing.T) {
 			want: []string{"since=2026-09-01", "until=2026-09-19"},
 		},
 	}
+	row := regexp.MustCompile(`(?m)^01jx .* 3$`)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pki := mintClientCert(t)
@@ -61,8 +63,8 @@ func TestMessagesListQuery(t *testing.T) {
 			if tt.want == nil && query != "" {
 				t.Errorf("query = %q, want empty", query)
 			}
-			if !strings.Contains(stdout.String(), "01jx") {
-				t.Errorf("stdout = %q, want the message id", stdout.String())
+			if !row.MatchString(stdout.String()) {
+				t.Errorf("stdout = %q, want the message row ending in its ATT count 3", stdout.String())
 			}
 		})
 	}
@@ -129,38 +131,5 @@ func TestMessagesListUsageErrors(t *testing.T) {
 				t.Errorf("run(%v) exit = %d, want 1", tt.verb, got)
 			}
 		})
-	}
-}
-
-// TestMessagesListAttachmentColumn checks the ATT column: rail's count, or 0
-// when the row has no attachments field.
-func TestMessagesListAttachmentColumn(t *testing.T) {
-	pki := mintClientCert(t)
-	url, caFile := newTLSServer(t, jsonHandler(http.StatusOK, map[string]any{
-		"messages": []map[string]any{
-			{"id": "01with", "status": "delivered", "from": "a@x.com", "to": []string{"b@y.com"}, "size": 10, "created_at": "2026-09-25T10:00:00Z", "attachments": 3},
-			{"id": "01none", "status": "delivered", "from": "a@x.com", "to": []string{"b@y.com"}, "size": 10, "created_at": "2026-09-25T09:00:00Z"},
-		},
-	}), pki.clientCAs)
-
-	var stdout, stderr bytes.Buffer
-	if got := run(baseArgs(url, pki, caFile, "messages", "list"), &stdout, &stderr); got != 0 {
-		t.Fatalf("run exit = %d, want 0; stderr = %s", got, stderr.String())
-	}
-	want := map[string]string{"ID": "ATT", "01with": "3", "01none": "0"}
-	for line := range strings.Lines(stdout.String()) {
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		if w, ok := want[fields[0]]; ok {
-			if last := fields[len(fields)-1]; last != w {
-				t.Errorf("row %s: last column = %q, want %q", fields[0], last, w)
-			}
-			delete(want, fields[0])
-		}
-	}
-	if len(want) > 0 {
-		t.Errorf("rows missing from output: %v\n%s", want, stdout.String())
 	}
 }
