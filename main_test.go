@@ -32,6 +32,13 @@ type testPKI struct {
 
 func mintClientCert(t *testing.T) testPKI {
 	t.Helper()
+	return mintClientCertWithSenders(t, "agent@example.com")
+}
+
+// mintClientCertWithSenders mints a client certificate whose email SANs,
+// the From addresses rail accepts, are senders.
+func mintClientCertWithSenders(t *testing.T, senders ...string) testPKI {
+	t.Helper()
 	dir := t.TempDir()
 
 	caKey := newKey(t)
@@ -57,7 +64,7 @@ func mintClientCert(t *testing.T) testPKI {
 	leafTmpl := &x509.Certificate{
 		SerialNumber:   big.NewInt(2),
 		Subject:        pkix.Name{CommonName: "testclient"},
-		EmailAddresses: []string{"agent@example.com"},
+		EmailAddresses: senders,
 		NotBefore:      time.Now().Add(-time.Hour),
 		NotAfter:       time.Now().Add(24 * time.Hour),
 		KeyUsage:       x509.KeyUsageDigitalSignature,

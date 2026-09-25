@@ -32,6 +32,7 @@ wagon send --from app@ataca.io --to user@example.com \
 wagon send --from app@ataca.io --to user@example.com \
   --subject "Your report" --body-file report.txt \
   --attach-file summary.pdf --attach-file export.csv
+wagon send-file --to user@example.com summary.pdf export.csv
 wagon test --to you@example.com                 # one-off test, sender from the cert
 wagon messages list                             # your own messages, newest first
 wagon messages list --status bounced --since 2026-09-01
@@ -44,8 +45,11 @@ wagon --json whoami                             # raw JSON, for any verb
 ```
 
 - `messages list` takes `--status`, `--from`, `--to`, `--since`, `--until`, and `--limit`. While more rows exist, it prints the `--before <next id>` command for the next page.
+- `--from` is optional on `send`, `send-file`, and `forms create`. It defaults to the certificate's first sender.
+- A sender the certificate does not allow fails with the list of allowed senders.
 - `--to`, `--cc`, and `--attach-file` repeat.
 - `--attach-file` mints one upload grant, uploads each file, and sends the resulting ids as attachments. A send takes up to 10 files.
+- `send-file` sends its file arguments the same way. Flags go before the files. The subject defaults to the file name, or `N files`. The body defaults to `Attached:` and the file names.
 - `wagon test` uses the certificate's first email SAN as the sender.
 
 ## Configuration

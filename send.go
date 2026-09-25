@@ -37,7 +37,7 @@ type sendResponse struct {
 func runSend(c *client, args []string, out, stderr io.Writer) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	from := fs.String("from", "", "sender address (required)")
+	from := fs.String("from", "", "sender address (default: the certificate's first sender)")
 	subject := fs.String("subject", "", "subject (required)")
 	text := fs.String("text", "", "plain-text body (fills body_text)")
 	html := fs.String("html", "", "HTML body (fills body_html)")
@@ -57,14 +57,17 @@ func runSend(c *client, args []string, out, stderr io.Writer) error {
 	}
 
 	switch {
-	case *from == "":
-		return &usageError{"--from is required"}
 	case len(to) == 0:
 		return &usageError{"at least one --to is required"}
 	case *subject == "":
 		return &usageError{"--subject is required"}
 	case *text != "" && *bodyFile != "":
 		return &usageError{"--text and --body-file are mutually exclusive"}
+	}
+
+	sender, err := c.from(*from)
+	if err != nil {
+		return err
 	}
 
 	bodyText, err := resolveSendBody(*text, *bodyFile)
@@ -84,9 +87,9 @@ func runSend(c *client, args []string, out, stderr io.Writer) error {
 		return err
 	}
 
-	req := sendRequest{
+	return postSend(c, sendRequest{
 		RequestID:      reqID,
-		From:           *from,
+		From:           sender,
 		To:             to,
 		Cc:             cc,
 		Subject:        *subject,
@@ -95,8 +98,11 @@ func runSend(c *client, args []string, out, stderr io.Writer) error {
 		ReplyTo:        *replyTo,
 		UnsubscribeURL: *unsubURL,
 		Attachments:    uploadedIDs,
-	}
+	}, out)
+}
 
+// postSend sends req to POST /api/v1/send and prints the response.
+func postSend(c *client, req sendRequest, out io.Writer) error {
 	var resp sendResponse
 	raw, err := c.do(http.MethodPost, "/api/v1/send", req, &resp)
 	if err != nil {
