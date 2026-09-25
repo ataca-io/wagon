@@ -36,6 +36,7 @@ wagon send-file --to user@example.com summary.pdf export.csv
 wagon test --to you@example.com                 # one-off test, sender from the cert
 wagon messages list                             # your own messages, newest first
 wagon messages list --status bounced --since 2026-09-01
+wagon message 01jx...                           # details, deliveries, and opens in one report
 wagon messages deliveries 01jx...               # every attempt on a message
 wagon messages opens 01jx...
 wagon forms list

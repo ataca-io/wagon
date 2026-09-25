@@ -55,6 +55,7 @@ var completionTree = completionSpec{
 		"send-file": {files: true, flags: map[string]bool{
 			"from": true, "to": true, "cc": true, "subject": true, "text": true, "request-id": true,
 		}},
+		"message": {},
 		"messages": {subs: map[string]completionSpec{
 			"list": {flags: map[string]bool{
 				"status": true, "from": true, "to": true, "since": true, "until": true, "limit": true, "before": true,
