@@ -42,6 +42,7 @@ wagon forms list
 wagon forms create --name contact --from noreply@ataca.io \
   --to you@example.com --subject "Contact form" --redirect https://example.com/thanks
 wagon --json whoami                             # raw JSON, for any verb
+wagon completion zsh                            # shell completion script, see below
 ```
 
 - `messages list` takes `--status`, `--from`, `--to`, `--since`, `--until`, and `--limit`. While more rows exist, it prints the `--before <next id>` command for the next page.
@@ -51,6 +52,39 @@ wagon --json whoami                             # raw JSON, for any verb
 - `--attach-file` mints one upload grant, uploads each file, and sends the resulting ids as attachments. A send takes up to 10 files.
 - `send-file` sends its file arguments the same way. Flags go before the files. The subject defaults to the file name, or `N files`. The body defaults to `Attached:` and the file names.
 - `wagon test` uses the certificate's first email SAN as the sender.
+
+## Shell completion
+
+`wagon completion <bash|zsh|fish>` prints a completion script. Install it once for your shell:
+
+```bash
+# bash (needs the bash-completion package)
+wagon completion bash > ~/.local/share/bash-completion/completions/wagon
+
+# zsh: write to any directory on $fpath, then start a new shell
+wagon completion zsh > "${fpath[1]}/_wagon"
+
+# fish
+wagon completion fish > ~/.config/fish/completions/wagon.fish
+```
+
+To try it in the current shell only:
+
+```bash
+source <(wagon completion zsh)      # zsh, after compinit
+eval "$(wagon completion bash)"     # bash; bash 3.2 cannot source <(...)
+wagon completion fish | source      # fish
+```
+
+Tab completes:
+
+- Verbs, subcommands, and flags.
+- `--status` values.
+- `--from` values, from the email addresses in your certificate.
+- File paths, for `--cert`, `--key`, `--ca`, `--body-file`, `--attach-file`, and the `send-file` and `auth setup` arguments.
+
+Completion works offline. It never calls rail, so it does not complete message ids or form tokens.
+It completes a flag value only in the `--flag value` form, not `--flag=value`.
 
 ## Configuration
 
