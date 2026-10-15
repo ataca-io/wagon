@@ -16,14 +16,25 @@ Point wagon at your rail client certificate once:
 
 ```bash
 wagon auth setup my-app.crt my-app.key   # copies both into ~/.wagon, mode 0600
-wagon auth                               # show the installed certificate and its expiry
+wagon auth                               # show the active certificate and its expiry
 ```
 
 `wagon auth setup` refuses a certificate and key that do not match. It writes both at mode 0600 under a 0700 `~/.wagon`.
 
+To keep several certificates, add named identities and switch between them:
+
+```bash
+wagon auth add work work.crt work.key    # installs the identity "work"
+wagon auth use work                      # makes "work" the active identity
+wagon auth list                          # lists identities, marks the active one
+wagon --identity default whoami          # use another identity for one call
+```
+
+`wagon auth setup` installs the identity named `default` in `~/.wagon`. Other identities live in `~/.wagon/identities/<name>/`. `~/.wagon/config.json` records the active identity. `wagon auth add` does not change it. Names use lowercase letters, digits, `.`, `_`, and `-`, and are at most 64 characters.
+
 ## Use
 
-`--server` defaults to `https://smtp.ataca.io`, and the certificate pair defaults to `~/.wagon`, so the rest needs no flags:
+`--server` defaults to `https://smtp.ataca.io`, and the certificate pair defaults to the active identity in `~/.wagon`, so the rest needs no flags:
 
 ```bash
 wagon whoami                                    # identity, allowed senders, webhooks
@@ -89,20 +100,22 @@ Tab completes:
 - Verbs, subcommands, and flags.
 - `--status` values.
 - `--from` values, from the email addresses in your certificate.
-- File paths, for `--cert`, `--key`, `--ca`, `--body-file`, `--attach-file`, and the `send-file` and `auth setup` arguments.
+- Identity names, for `auth use` and `--identity`.
+- File paths, for `--cert`, `--key`, `--ca`, `--body-file`, `--attach-file`, and the `send-file`, `auth setup`, and `auth add` arguments.
 
 Completion works offline. It never calls rail, so it does not complete message ids or form tokens.
 It completes a flag value only in the `--flag value` form, not `--flag=value`.
 
 ## Configuration
 
-Flags override the environment, which overrides `~/.wagon`:
+Flags override the environment, which overrides `~/.wagon`. `--cert` and `--key` override `--identity`:
 
 | Flag | Environment | Default |
 |---|---|---|
 | `--server` | `RAIL_SERVER` | `https://smtp.ataca.io` |
-| `--cert` | `RAIL_CERT` | `~/.wagon/client.crt` |
-| `--key` | `RAIL_KEY` | `~/.wagon/client.key` |
+| `--identity` | `WAGON_IDENTITY` | `~/.wagon/config.json`, else `default` |
+| `--cert` | `RAIL_CERT` | the active identity's `client.crt` |
+| `--key` | `RAIL_KEY` | the active identity's `client.key` |
 | `--ca` | `RAIL_CA` | system roots |
 
 ## Exit codes

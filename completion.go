@@ -2,9 +2,7 @@ package main
 
 import (
 	"cmp"
-	"crypto/x509"
 	_ "embed"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"maps"
@@ -28,11 +26,13 @@ var fishCompletion string
 const completeFile = ":file"
 
 // completionSpec is one command in the completion tree. flags maps each flag
-// name to whether it takes a value; files marks file-path arguments.
+// name to whether it takes a value; files marks file-path arguments and
+// identities marks identity-name arguments.
 type completionSpec struct {
-	flags map[string]bool
-	subs  map[string]completionSpec
-	files bool
+	flags      map[string]bool
+	subs       map[string]completionSpec
+	files      bool
+	identities bool
 }
 
 // completionFormFlags are registerFormFlags' flags, shared by forms create and update.
@@ -45,7 +45,7 @@ var completionFormFlags = map[string]bool{
 // completionTree mirrors run's global flags and dispatch. TestCompletionFlagsMatch
 // fails when a verb's FlagSet and this table disagree.
 var completionTree = completionSpec{
-	flags: map[string]bool{"server": true, "cert": true, "key": true, "ca": true, "json": false},
+	flags: map[string]bool{"server": true, "identity": true, "cert": true, "key": true, "ca": true, "json": false},
 	subs: map[string]completionSpec{
 		"whoami": {},
 		"send": {flags: map[string]bool{
@@ -74,6 +74,9 @@ var completionTree = completionSpec{
 		"test": {flags: map[string]bool{"to": true}},
 		"auth": {subs: map[string]completionSpec{
 			"setup": {files: true},
+			"add":   {files: true},
+			"use":   {identities: true},
+			"list":  {},
 			"show":  {},
 		}},
 		"version":    {},
@@ -117,11 +120,14 @@ func runComplete(words []string, out io.Writer) {
 	cur, done := words[len(words)-1], words[:len(words)-1]
 
 	spec := completionTree
-	var certPath, pendingFlag string
+	var certPath, identity, pendingFlag string
 	for _, w := range done {
 		if pendingFlag != "" {
-			if pendingFlag == "cert" {
+			switch pendingFlag {
+			case "cert":
 				certPath = w
+			case "identity":
+				identity = w
 			}
 			pendingFlag = ""
 			continue
@@ -129,6 +135,9 @@ func runComplete(words []string, out io.Writer) {
 		if name, value, inline, isFlag := splitFlag(w); isFlag {
 			if inline && name == "cert" {
 				certPath = value
+			}
+			if inline && name == "identity" {
+				identity = value
 			}
 			if !inline && spec.flags[name] {
 				pendingFlag = name
@@ -149,7 +158,9 @@ func runComplete(words []string, out io.Writer) {
 	case pendingFlag == "status":
 		candidates = statusValues
 	case pendingFlag == "from":
-		candidates = certSenders(certPath)
+		candidates = certSenders(certPath, identity)
+	case pendingFlag == "identity":
+		candidates, _ = identityNames()
 	case fileFlags[pendingFlag]:
 		_, _ = fmt.Fprintln(out, completeFile)
 		return
@@ -162,6 +173,8 @@ func runComplete(words []string, out io.Writer) {
 		slices.Sort(candidates)
 	case len(spec.subs) > 0:
 		candidates = slices.Sorted(maps.Keys(spec.subs))
+	case spec.identities:
+		candidates, _ = identityNames()
 	case spec.files:
 		_, _ = fmt.Fprintln(out, completeFile)
 		return
@@ -185,10 +198,17 @@ func splitFlag(w string) (name, value string, inline, ok bool) {
 }
 
 // certSenders returns the email SANs of the certificate named by --cert,
-// RAIL_CERT, or ~/.wagon, in that order. It reads no key, and any failure
-// yields no senders.
-func certSenders(certPath string) []string {
-	path := cmp.Or(certPath, os.Getenv("RAIL_CERT"), filepath.Join(wagonDir(), authCert))
+// RAIL_CERT, or the active identity (--identity, WAGON_IDENTITY, config.json),
+// in that order. It reads no key, and any failure yields no senders.
+func certSenders(certPath, identity string) []string {
+	path := cmp.Or(certPath, os.Getenv("RAIL_CERT"))
+	if path == "" {
+		name, err := activeIdentity(cmp.Or(identity, os.Getenv("WAGON_IDENTITY")))
+		if err != nil {
+			return nil
+		}
+		path = filepath.Join(identityDir(name), authCert)
+	}
 	if rest, ok := strings.CutPrefix(path, "~/"); ok {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -196,17 +216,9 @@ func certSenders(certPath string) []string {
 		}
 		path = filepath.Join(home, rest)
 	}
-	data, err := os.ReadFile(path)
+	leaf, err := loadLeaf(path)
 	if err != nil {
 		return nil
 	}
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil
-	}
-	return cert.EmailAddresses
+	return leaf.EmailAddresses
 }

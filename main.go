@@ -36,9 +36,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	fs.Usage = func() { usage(stderr) }
 	server := fs.String("server", os.Getenv("RAIL_SERVER"), "rail server URL (env RAIL_SERVER, default "+defaultServer+")")
-	certFile := fs.String("cert", os.Getenv("RAIL_CERT"), "client certificate file (env RAIL_CERT, default ~/.wagon/"+authCert+")")
-	keyFile := fs.String("key", os.Getenv("RAIL_KEY"), "client key file (env RAIL_KEY, default ~/.wagon/"+authKey+")")
+	certFile := fs.String("cert", os.Getenv("RAIL_CERT"), "client certificate file (env RAIL_CERT, default: the active identity's "+authCert+")")
+	keyFile := fs.String("key", os.Getenv("RAIL_KEY"), "client key file (env RAIL_KEY, default: the active identity's "+authKey+")")
 	caFile := fs.String("ca", os.Getenv("RAIL_CA"), "CA certificate file (env RAIL_CA, default: system pool)")
+	identity := fs.String("identity", os.Getenv("WAGON_IDENTITY"), "identity name (env WAGON_IDENTITY, default: the active identity in ~/.wagon/config.json)")
 	jsonOut := fs.Bool("json", false, "print raw JSON responses")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -66,14 +67,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	case "auth":
-		if err := runAuth(verbArgs, stdout); err != nil {
+		if err := runAuth(verbArgs, *identity, stdout); err != nil {
 			_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 			return 1
 		}
 		return 0
 	}
 
-	cert, key, err := resolveKeys(*certFile, *keyFile)
+	cert, key, err := resolveKeys(*certFile, *keyFile, *identity)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
@@ -118,10 +119,10 @@ func dispatch(c *client, verb string, args []string, stdout, stderr io.Writer) e
 }
 
 func usage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "Usage: wagon [--server URL] [--cert FILE] [--key FILE] [--ca FILE] [--json] <verb> [args]")
+	_, _ = fmt.Fprintln(w, "Usage: wagon [--server URL] [--identity NAME] [--cert FILE] [--key FILE] [--ca FILE] [--json] <verb> [args]")
 	_, _ = fmt.Fprintln(w, "Verbs: whoami, send, send-file, message, messages, forms, test, auth, version, completion")
-	_, _ = fmt.Fprintln(w, "Env fallbacks: RAIL_SERVER, RAIL_CERT, RAIL_KEY, RAIL_CA")
-	_, _ = fmt.Fprintln(w, "Defaults: --server "+defaultServer+", --cert and --key from ~/.wagon (see `wagon auth setup`)")
+	_, _ = fmt.Fprintln(w, "Env fallbacks: RAIL_SERVER, RAIL_CERT, RAIL_KEY, RAIL_CA, WAGON_IDENTITY")
+	_, _ = fmt.Fprintln(w, "Defaults: --server "+defaultServer+", --cert and --key from the active identity in ~/.wagon (see `wagon auth setup`)")
 }
 
 // repeatedFlag collects a repeatable string flag, for example --to a@x.com --to b@x.com.

@@ -27,6 +27,7 @@ func TestComplete(t *testing.T) {
 	// An empty HOME and RAIL_CERT keep a real certificate out of --from.
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("RAIL_CERT", "")
+	t.Setenv("WAGON_IDENTITY", "")
 
 	tests := []struct {
 		name  string
@@ -37,9 +38,9 @@ func TestComplete(t *testing.T) {
 		{"partial verb", []string{"s"}, []string{"send", "send-file"}},
 		{"messages subcommands", []string{"messages", ""}, []string{"deliveries", "list", "opens"}},
 		{"forms subcommands after --json", []string{"--json", "forms", ""}, []string{"create", "delete", "get", "list", "submissions", "update"}},
-		{"auth subcommands", []string{"auth", ""}, []string{"setup", "show"}},
+		{"auth subcommands", []string{"auth", ""}, []string{"add", "list", "setup", "show", "use"}},
 		{"completion shells", []string{"completion", ""}, []string{"bash", "fish", "zsh"}},
-		{"global flags", []string{"--"}, []string{"--ca", "--cert", "--json", "--key", "--server"}},
+		{"global flags", []string{"--"}, []string{"--ca", "--cert", "--identity", "--json", "--key", "--server"}},
 		{"global flag values are skipped", []string{"--server", "https://x:443", "--ca", "ca.crt", "te"}, []string{"test"}},
 		{"verb flags", []string{"send", "--subject", "hi", "--t"}, []string{"--text", "--to"}},
 		{"flags after a form token", []string{"forms", "submissions", "tok", "--"}, []string{"--before", "--id", "--limit"}},
@@ -78,6 +79,19 @@ func TestCompleteFromSenders(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// workHome has no default pair; only the work identity, named by config.json.
+	workHome := t.TempDir()
+	workDir := filepath.Join(workHome, ".wagon", "identities", "work")
+	if err := os.MkdirAll(workDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, authCert), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workHome, ".wagon", configFile), []byte(`{"identity":"work"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	tests := []struct {
 		name      string
 		home, env string
@@ -89,12 +103,54 @@ func TestCompleteFromSenders(t *testing.T) {
 		{"RAIL_CERT", t.TempDir(), pki.certFile, []string{"send", "--from", ""}, want},
 		{"~/.wagon", home, "", []string{"send-file", "--from", ""}, want},
 		{"prefix filter", home, "", []string{"forms", "create", "--from", "h"}, want[1:]},
+		{"config identity", workHome, "", []string{"send", "--from", ""}, want},
+		{"--identity word", workHome, "", []string{"--identity", "work", "send", "--from", ""}, want},
+		{"--identity=name word", workHome, "", []string{"--identity=work", "send", "--from", ""}, want},
 		{"missing certificate", t.TempDir(), "", []string{"--cert", "/does/not/exist", "send", "--from", ""}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("HOME", tt.home)
 			t.Setenv("RAIL_CERT", tt.env)
+			t.Setenv("WAGON_IDENTITY", "")
+			if got := complete(t, tt.words...); !slices.Equal(got, tt.want) {
+				t.Errorf("__complete %q = %q, want %q", tt.words, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompleteIdentities(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("RAIL_CERT", "")
+	t.Setenv("WAGON_IDENTITY", "")
+	for _, p := range []string{
+		filepath.Join(".wagon", authCert),
+		filepath.Join(".wagon", "identities", "work", authCert),
+		filepath.Join(".wagon", "identities", "prod", authCert),
+		filepath.Join(".wagon", "identities", "empty", "other"),
+	} {
+		path := filepath.Join(home, p)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		words []string
+		want  []string
+	}{
+		{"auth use", []string{"auth", "use", ""}, []string{"default", "prod", "work"}},
+		{"--identity", []string{"--identity", ""}, []string{"default", "prod", "work"}},
+		{"prefix filter", []string{"auth", "use", "w"}, []string{"work"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			if got := complete(t, tt.words...); !slices.Equal(got, tt.want) {
 				t.Errorf("__complete %q = %q, want %q", tt.words, got, tt.want)
 			}
@@ -161,6 +217,7 @@ func TestCompletionCommandsMatch(t *testing.T) {
 	subs := map[string]error{
 		"messages": runMessages(nil, nil, io.Discard, io.Discard),
 		"forms":    runForms(nil, nil, io.Discard, io.Discard),
+		"auth":     runAuth([]string{"bogus"}, "", io.Discard),
 	}
 	for verb, err := range subs {
 		m := regexp.MustCompile(`<([\w|-]+)>`).FindStringSubmatch(err.Error())
@@ -188,6 +245,7 @@ func TestRunCompletion(t *testing.T) {
 	// Completion must work before `wagon auth setup`: no HOME certificate.
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("RAIL_CERT", "")
+	t.Setenv("WAGON_IDENTITY", "")
 	t.Setenv("RAIL_KEY", "")
 
 	checkers := map[string][]string{
