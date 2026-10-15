@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"crypto/x509"
 	"encoding/json"
@@ -59,6 +60,9 @@ func loadConfig() (config, error) {
 	if err != nil {
 		return cfg, fmt.Errorf("error reading %s: %w", path, err)
 	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return cfg, nil
+	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return config{}, fmt.Errorf("error parsing %s: %w", path, err)
 	}
@@ -76,6 +80,9 @@ func saveConfig(cfg config) error {
 		return fmt.Errorf("error encoding config: %w", err)
 	}
 	path := filepath.Join(dir, configFile)
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("error replacing %s: %w", path, err)
+	}
 	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 		return fmt.Errorf("error writing %s: %w", path, err)
 	}
@@ -83,24 +90,35 @@ func saveConfig(cfg config) error {
 }
 
 // activeIdentity picks the override, else the config's identity, else
-// defaultIdentity. A malformed config.json is an error even with an override.
+// defaultIdentity. An override skips config.json; a malformed config.json is
+// an error otherwise, never a silent fallback.
 func activeIdentity(override string) (string, error) {
+	if override != "" {
+		return override, validIdentity(override)
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		return "", err
 	}
-	name := cmp.Or(override, cfg.Identity, defaultIdentity)
+	name := cmp.Or(cfg.Identity, defaultIdentity)
 	if err := validIdentity(name); err != nil {
 		return "", err
 	}
 	return name, nil
 }
 
+// installed reports whether the named identity has both client.crt and
+// client.key. A symlinked directory counts.
+func installed(name string) bool {
+	dir := identityDir(name)
+	return fileExists(filepath.Join(dir, authCert)) && fileExists(filepath.Join(dir, authKey))
+}
+
 // identityNames lists the installed identities in sorted order. An identity
-// counts as installed when its client.crt exists.
+// is installed when it has both client.crt and client.key.
 func identityNames() ([]string, error) {
 	var names []string
-	if fileExists(filepath.Join(wagonDir(), authCert)) {
+	if installed(defaultIdentity) {
 		names = append(names, defaultIdentity)
 	}
 	entries, err := os.ReadDir(filepath.Join(wagonDir(), identitiesDir))
@@ -109,10 +127,10 @@ func identityNames() ([]string, error) {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if !e.IsDir() || name == defaultIdentity || validIdentity(name) != nil {
+		if name == defaultIdentity || validIdentity(name) != nil {
 			continue
 		}
-		if fileExists(filepath.Join(identityDir(name), authCert)) {
+		if installed(name) {
 			names = append(names, name)
 		}
 	}

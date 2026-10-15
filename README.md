@@ -30,7 +30,7 @@ wagon auth list                          # lists identities, marks the active on
 wagon --identity default whoami          # use another identity for one call
 ```
 
-`wagon auth setup` installs the identity named `default` in `~/.wagon`. Other identities live in `~/.wagon/identities/<name>/`. `~/.wagon/config.json` records the active identity. `wagon auth add` does not change it. Names use lowercase letters, digits, `.`, `_`, and `-`, and are at most 64 characters.
+`wagon auth setup` installs the identity named `default` in `~/.wagon`. Other identities live in `~/.wagon/identities/<name>/`. `~/.wagon/config.json` records the active identity. `wagon auth add` does not change it. Names start with a lowercase letter or digit. They then use lowercase letters, digits, `.`, `_`, and `-`, up to 64 characters.
 
 ## Use
 
@@ -108,7 +108,14 @@ It completes a flag value only in the `--flag value` form, not `--flag=value`.
 
 ## Configuration
 
-Flags override the environment, which overrides `~/.wagon`. `--cert` and `--key` override `--identity`:
+For `--server` and `--ca`, a flag overrides the environment, which overrides the default. The certificate pair comes from the first of these that is set:
+
+1. `--cert` and `--key`
+2. `RAIL_CERT` and `RAIL_KEY`
+3. `--identity`
+4. `WAGON_IDENTITY`
+5. `~/.wagon/config.json`
+6. `default`
 
 | Flag | Environment | Default |
 |---|---|---|

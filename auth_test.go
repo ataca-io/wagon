@@ -205,9 +205,8 @@ func TestIdentityNameValidation(t *testing.T) {
 				t.Errorf("add %q error = %v, want error %v", tt.name, err, tt.wantErr)
 			}
 			if tt.wantErr {
-				var ue *usageError
-				if err := runAuth([]string{"use", tt.name}, "", io.Discard); !errors.As(err, &ue) {
-					t.Errorf("use %q error = %v, want a usage error", tt.name, err)
+				if _, ok := errors.AsType[*usageError](runAuth([]string{"use", tt.name}, "", io.Discard)); !ok {
+					t.Errorf("use %q error is not a usage error", tt.name)
 				}
 			}
 		})
@@ -407,5 +406,160 @@ func TestRunSelectsIdentity(t *testing.T) {
 	t.Setenv("WAGON_IDENTITY", "default")
 	if got := run([]string{"--server", url, "whoami"}, io.Discard, io.Discard); got != 2 {
 		t.Errorf("WAGON_IDENTITY=default exit = %d, want 2", got)
+	}
+}
+
+// setupHome installs a default pair and a "work" identity under a fresh HOME.
+func setupHome(t *testing.T) (home string, root, work testPKI) {
+	t.Helper()
+	root, work = mintClientCert(t), mintClientCert(t)
+	home = t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WAGON_IDENTITY", "")
+	for _, args := range [][]string{
+		{"setup", root.certFile, root.keyFile},
+		{"add", "work", work.certFile, work.keyFile},
+	} {
+		if err := runAuth(args, "", io.Discard); err != nil {
+			t.Fatalf("runAuth(%v) = %v", args, err)
+		}
+	}
+	return home, root, work
+}
+
+func TestEmptyConfigIsDefault(t *testing.T) {
+	for _, content := range []string{"", " \n\t"} {
+		t.Run(strconv.Quote(content), func(t *testing.T) {
+			home, _, _ := setupHome(t)
+			if err := os.WriteFile(filepath.Join(home, ".wagon", configFile), []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cert, _, err := resolveKeys("", "", "")
+			if want := filepath.Join(home, ".wagon", authCert); err != nil || cert != want {
+				t.Errorf("resolveKeys = %q, %v, want %q", cert, err, want)
+			}
+		})
+	}
+}
+
+func TestOverrideSkipsMalformedConfig(t *testing.T) {
+	home, _, _ := setupHome(t)
+	if err := os.WriteFile(filepath.Join(home, ".wagon", configFile), []byte("{nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := resolveKeys("", "", "work"); err != nil {
+		t.Errorf("resolveKeys with override = %v, want nil", err)
+	}
+	if err := runAuth([]string{"list"}, "work", io.Discard); err != nil {
+		t.Errorf("list with override = %v, want nil", err)
+	}
+}
+
+func TestUseTightensConfigMode(t *testing.T) {
+	home, _, _ := setupHome(t)
+	path := filepath.Join(home, ".wagon", configFile)
+	if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runAuth([]string{"use", "work"}, "", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("config.json mode = %o, want 600", got)
+	}
+}
+
+func TestAddHint(t *testing.T) {
+	_, root, work := setupHome(t)
+	hint := "wagon auth use work"
+	var out bytes.Buffer
+	if err := runAuth([]string{"add", "work", work.certFile, work.keyFile}, "", &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), hint) {
+		t.Errorf("add with default active = %q, want the hint %q", out.String(), hint)
+	}
+
+	if err := runAuth([]string{"use", "work"}, "", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := runAuth([]string{"add", "work", work.certFile, work.keyFile}, "", &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), hint) {
+		t.Errorf("add with work active = %q, want no hint", out.String())
+	}
+
+	// setup replaces default and leaves work active.
+	if err := runAuth([]string{"setup", root.certFile, root.keyFile}, "", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	cert, _, err := resolveKeys("", "", "")
+	if want := identityDir("work"); err != nil || filepath.Dir(cert) != want {
+		t.Errorf("resolveKeys after setup = %q, %v, want a pair in %s", cert, err, want)
+	}
+}
+
+func TestInstalledMeansBothFiles(t *testing.T) {
+	home, _, work := setupHome(t)
+	ids := filepath.Join(home, ".wagon", identitiesDir)
+	partial := filepath.Join(ids, "partial")
+	if err := os.MkdirAll(partial, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(work.certFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(partial, authCert), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(ids, "work"), filepath.Join(ids, "linked")); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := runAuth([]string{"list"}, "", &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "partial") {
+		t.Errorf("list = %q, want no partial identity", out.String())
+	}
+	if !strings.Contains(out.String(), "linked") {
+		t.Errorf("list = %q, want the symlinked identity", out.String())
+	}
+	if err := runAuth([]string{"use", "partial"}, "", io.Discard); err == nil {
+		t.Error("use partial = nil, want error")
+	}
+}
+
+func TestDefaultPathMessages(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WAGON_IDENTITY", "")
+	if _, _, err := resolveKeys("", "", ""); err == nil || !strings.Contains(err.Error(), "wagon auth setup") {
+		t.Errorf("resolveKeys error = %v, want it to name wagon auth setup", err)
+	}
+	var out bytes.Buffer
+	if err := runAuth(nil, "", &out); err != nil || !strings.Contains(out.String(), "no certificate in") {
+		t.Errorf("show = %q, %v, want %q", out.String(), err, "no certificate in")
+	}
+	if _, _, err := resolveKeys("", "", "work"); err == nil || !strings.Contains(err.Error(), "wagon auth add work") {
+		t.Errorf("resolveKeys error = %v, want it to name wagon auth add work", err)
+	}
+}
+
+func TestUseNotesOverride(t *testing.T) {
+	setupHome(t)
+	var out bytes.Buffer
+	if err := runAuth([]string{"use", "work"}, "default", &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "note: ") {
+		t.Errorf("use output = %q, want the override note", out.String())
 	}
 }

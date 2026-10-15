@@ -127,8 +127,11 @@ func TestCompleteIdentities(t *testing.T) {
 	t.Setenv("WAGON_IDENTITY", "")
 	for _, p := range []string{
 		filepath.Join(".wagon", authCert),
+		filepath.Join(".wagon", authKey),
 		filepath.Join(".wagon", "identities", "work", authCert),
+		filepath.Join(".wagon", "identities", "work", authKey),
 		filepath.Join(".wagon", "identities", "prod", authCert),
+		filepath.Join(".wagon", "identities", "prod", authKey),
 		filepath.Join(".wagon", "identities", "empty", "other"),
 	} {
 		path := filepath.Join(home, p)

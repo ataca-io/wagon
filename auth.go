@@ -42,10 +42,14 @@ func fileExists(path string) bool {
 // the verb that fixes it. It reads the config only when it needs the identity.
 func resolveKeys(certFile, keyFile, identity string) (string, string, error) {
 	cert, key := certFile, keyFile
+	fix := "`wagon auth setup <cert> <key>`"
 	if cert == "" || key == "" {
 		name, err := activeIdentity(identity)
 		if err != nil {
 			return "", "", err
+		}
+		if name != defaultIdentity {
+			fix = fmt.Sprintf("`wagon auth add %s <cert> <key>`", name)
 		}
 		dir := identityDir(name)
 		cert = cmp.Or(certFile, filepath.Join(dir, authCert))
@@ -53,7 +57,7 @@ func resolveKeys(certFile, keyFile, identity string) (string, string, error) {
 	}
 	for _, p := range []string{cert, key} {
 		if !fileExists(p) {
-			return "", "", fmt.Errorf("no client certificate at %s: run `wagon auth add <name> <cert> <key>` or `wagon auth use <name>`, or pass --cert and --key", p)
+			return "", "", fmt.Errorf("no client certificate at %s: run %s, or pass --cert and --key", p, fix)
 		}
 	}
 	return cert, key, nil
@@ -70,7 +74,7 @@ func runAuth(args []string, identity string, stdout io.Writer) error {
 	case args[0] == "add" && len(args) == 4:
 		return addIdentity(args[1], args[2], args[3], stdout)
 	case args[0] == "use" && len(args) == 2:
-		return useIdentity(args[1], stdout)
+		return useIdentity(args[1], identity, stdout)
 	case args[0] == "list" && len(args) == 1:
 		return listIdentities(identity, stdout)
 	default:
@@ -78,10 +82,9 @@ func runAuth(args []string, identity string, stdout io.Writer) error {
 	}
 }
 
-// addIdentity copies a certificate pair into the named identity's directory,
-// so later commands need no flags. It parses the pair from the bytes it is
-// about to write, so a mismatched cert and key fails here rather than at the
-// next TLS handshake. It never changes the active identity.
+// addIdentity copies a certificate pair into the named identity's directory.
+// It parses the pair from the bytes it is about to write, so a mismatch fails
+// here, not at the next TLS handshake. It never changes the active identity.
 func addIdentity(name, certFile, keyFile string, stdout io.Writer) error {
 	if err := validIdentity(name); err != nil {
 		return err
@@ -118,19 +121,23 @@ func addIdentity(name, certFile, keyFile string, stdout io.Writer) error {
 	return nil
 }
 
-// useIdentity makes an installed identity the active one in config.json.
-func useIdentity(name string, stdout io.Writer) error {
+// useIdentity makes an installed identity the active one in config.json. It
+// notes an override from --identity or WAGON_IDENTITY, which still wins.
+func useIdentity(name, override string, stdout io.Writer) error {
 	if err := validIdentity(name); err != nil {
 		return err
 	}
 	dir := identityDir(name)
-	if !fileExists(filepath.Join(dir, authCert)) || !fileExists(filepath.Join(dir, authKey)) {
+	if !installed(name) {
 		return fmt.Errorf("no identity %q in %s: run `wagon auth add %s <cert> <key>`", name, dir, name)
 	}
 	if err := saveConfig(config{Identity: name}); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(stdout, "active identity: %s\n", name)
+	if override != "" && override != name {
+		_, _ = fmt.Fprintf(stdout, "note: --identity or WAGON_IDENTITY selects %s for this shell\n", override)
+	}
 	return nil
 }
 
@@ -188,7 +195,11 @@ func showAuth(identity string, stdout io.Writer) error {
 	dir := identityDir(name)
 	cert, key := filepath.Join(dir, authCert), filepath.Join(dir, authKey)
 	if !fileExists(cert) {
-		_, _ = fmt.Fprintf(stdout, "no certificate for identity %s in %s; run `wagon auth add <name> <cert> <key>` or `wagon auth setup <cert> <key>`\n", name, dir)
+		if name == defaultIdentity {
+			_, _ = fmt.Fprintf(stdout, "no certificate in %s; run `wagon auth setup <cert> <key>`\n", dir)
+			return nil
+		}
+		_, _ = fmt.Fprintf(stdout, "no certificate for identity %s in %s; run `wagon auth add %s <cert> <key>`\n", name, dir, name)
 		return nil
 	}
 	pair, err := tls.LoadX509KeyPair(cert, key)
