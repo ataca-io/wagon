@@ -351,6 +351,7 @@ func TestRunUsageErrors(t *testing.T) {
 			t.Setenv("RAIL_SERVER", "")
 			t.Setenv("RAIL_CERT", "")
 			t.Setenv("RAIL_KEY", "")
+			t.Setenv("WAGON_IDENTITY", "")
 			t.Setenv("RAIL_CA", "")
 
 			var stdout, stderr bytes.Buffer
