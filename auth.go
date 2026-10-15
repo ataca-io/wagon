@@ -136,7 +136,7 @@ func useIdentity(name, override string, stdout io.Writer) error {
 	}
 	_, _ = fmt.Fprintf(stdout, "active identity: %s\n", name)
 	if override != "" && override != name {
-		_, _ = fmt.Fprintf(stdout, "note: --identity or WAGON_IDENTITY selects %s for this shell\n", override)
+		_, _ = fmt.Fprintf(stdout, "note: --identity or WAGON_IDENTITY overrides this with %s\n", override)
 	}
 	return nil
 }

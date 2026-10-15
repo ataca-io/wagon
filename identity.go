@@ -94,7 +94,10 @@ func saveConfig(cfg config) error {
 // an error otherwise, never a silent fallback.
 func activeIdentity(override string) (string, error) {
 	if override != "" {
-		return override, validIdentity(override)
+		if err := validIdentity(override); err != nil {
+			return "", err
+		}
+		return override, nil
 	}
 	cfg, err := loadConfig()
 	if err != nil {

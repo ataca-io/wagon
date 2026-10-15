@@ -30,7 +30,7 @@ wagon auth list                          # lists identities, marks the active on
 wagon --identity default whoami          # use another identity for one call
 ```
 
-`wagon auth setup` installs the identity named `default` in `~/.wagon`. Other identities live in `~/.wagon/identities/<name>/`. `~/.wagon/config.json` records the active identity. `wagon auth add` does not change it. Names start with a lowercase letter or digit. They then use lowercase letters, digits, `.`, `_`, and `-`, up to 64 characters.
+`wagon auth setup` installs the identity named `default` in `~/.wagon`. Other identities live in `~/.wagon/identities/<name>/`. `~/.wagon/config.json` records the active identity. `wagon auth add` does not change it. Names are 1 to 64 characters: a lowercase letter or digit, then lowercase letters, digits, `.`, `_`, and `-`.
 
 ## Use
 
