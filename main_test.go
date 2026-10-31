@@ -133,10 +133,18 @@ func jsonHandler(status int, body any) http.HandlerFunc {
 	}
 }
 
-// whoHandler mirrors WhoAPI (internal/httpd/who.go): GET returns JSON only
-// when Accept asks for it, otherwise the HTML inspection page.
+// whoHandler serves identity inspection and an empty owned-domain list.
+// The identity endpoint requires Accept: application/json, like rail.
 func whoHandler(status int, body any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/domains" {
+			jsonHandler(http.StatusOK, map[string]any{"domains": []any{}})(w, r)
+			return
+		}
+		if r.Method != http.MethodGet || r.URL.Path != "/who" {
+			http.NotFound(w, r)
+			return
+		}
 		if !strings.Contains(r.Header.Get("Accept"), "application/json") {
 			w.Header().Set("Content-Type", "text/html")
 			w.WriteHeader(http.StatusOK)
@@ -365,7 +373,7 @@ func TestRunUsageErrors(t *testing.T) {
 
 func TestRunEnvFallbackAndFlagPrecedence(t *testing.T) {
 	pki := mintClientCert(t)
-	url, caFile := newTLSServer(t, jsonHandler(http.StatusOK, map[string]any{"client_id": "testclient"}), pki.clientCAs)
+	url, caFile := newTLSServer(t, whoHandler(http.StatusOK, map[string]any{"client_id": "testclient"}), pki.clientCAs)
 
 	t.Run("env fallback", func(t *testing.T) {
 		t.Setenv("RAIL_SERVER", url)

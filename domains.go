@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -128,15 +129,19 @@ func runDomainsList(c *client, args []string, out, stderr io.Writer) error {
 	if c.jsonOut {
 		return printPretty(out, raw)
 	}
-	rows := make([][]string, 0, len(resp.Domains))
-	for _, d := range resp.Domains {
-		rows = append(rows, []string{d.Domain, d.Status, d.DNSMode, strconv.FormatBool(d.ReceivingEnabled), d.CreatedAt})
-	}
-	renderTable(out, []string{"DOMAIN", "STATUS", "DNS_MODE", "RECEIVING", "CREATED"}, rows)
+	renderDomains(out, resp.Domains)
 	if resp.NextCursor != "" {
 		_, _ = fmt.Fprintf(out, "next_cursor: %s (pass as --after)\n", resp.NextCursor)
 	}
 	return nil
+}
+
+func renderDomains(out io.Writer, domains []domainResponse) {
+	rows := make([][]string, 0, len(domains))
+	for _, d := range domains {
+		rows = append(rows, []string{d.Domain, d.Status, d.DNSMode, strconv.FormatBool(d.ReceivingEnabled), d.CreatedAt})
+	}
+	renderTable(out, []string{"DOMAIN", "STATUS", "DNS_MODE", "RECEIVING", "CREATED"}, rows)
 }
 
 func runDomainsCreate(c *client, args []string, out, stderr io.Writer) error {
@@ -237,17 +242,7 @@ func runDomainAction(c *client, action string, args []string, out, stderr io.Wri
 			_, _ = fmt.Fprintf(out, "deleted domain %s\n", args[0])
 		}
 	case "records":
-		var resp struct {
-			Records []domainDNSRecord `json:"records"`
-		}
-		raw, err := c.do(http.MethodGet, path+"/records", nil, &resp)
-		if err != nil {
-			return err
-		}
-		if c.jsonOut {
-			return printPretty(out, raw)
-		}
-		renderDomainRecords(out, resp.Records)
+		return runDomainRecords(c, args[0], out, net.DefaultResolver)
 	}
 	return nil
 }
