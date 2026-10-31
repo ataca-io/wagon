@@ -40,7 +40,7 @@ func TestDomainsAPI(t *testing.T) {
 		{
 			name: "list", args: []string{"list"}, method: http.MethodGet, uri: "/api/v1/domains", status: 200,
 			response: `{"domains":[` + domainFixture + `],"next_cursor":"next-domain"}`,
-			output:   []string{"example.com", "pending", "records", "false", "next_cursor: next-domain (pass as --after)"},
+			output:   []string{"example.com", "pending", "records", "Sending only", "next_cursor: next-domain (pass as --after)"},
 		},
 		{
 			name: "list page", args: []string{"list", "--limit", "2", "--after", "opaque+/=?&"},

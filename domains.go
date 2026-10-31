@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -28,9 +27,11 @@ type domainResponse struct {
 }
 
 type domainDNSRecord struct {
-	Name  string `json:"name"`
-	Type  string `json:"type"`
-	Value string `json:"value"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Value       string `json:"value"`
+	Purpose     string `json:"purpose,omitempty"`
+	Requirement string `json:"requirement,omitempty"`
 }
 
 func runDomains(c *client, args []string, out, stderr io.Writer) error {
@@ -139,9 +140,9 @@ func runDomainsList(c *client, args []string, out, stderr io.Writer) error {
 func renderDomains(out io.Writer, domains []domainResponse) {
 	rows := make([][]string, 0, len(domains))
 	for _, d := range domains {
-		rows = append(rows, []string{d.Domain, d.Status, d.DNSMode, strconv.FormatBool(d.ReceivingEnabled), d.CreatedAt})
+		rows = append(rows, []string{d.Domain, d.Status, d.DNSMode, domainUsage(d.ReceivingEnabled), d.CreatedAt})
 	}
-	renderTable(out, []string{"DOMAIN", "STATUS", "DNS_MODE", "RECEIVING", "CREATED"}, rows)
+	renderTable(out, []string{"DOMAIN", "STATUS", "DNS_MODE", "USAGE", "CREATED"}, rows)
 }
 
 func runDomainsCreate(c *client, args []string, out, stderr io.Writer) error {
@@ -242,7 +243,7 @@ func runDomainAction(c *client, action string, args []string, out, stderr io.Wri
 			_, _ = fmt.Fprintf(out, "deleted domain %s\n", args[0])
 		}
 	case "records":
-		return runDomainRecords(c, args[0], out, net.DefaultResolver)
+		return runDomainRecords(c, args[0], out)
 	}
 	return nil
 }
@@ -250,6 +251,7 @@ func runDomainAction(c *client, action string, args []string, out, stderr io.Wri
 func renderDomain(out io.Writer, d *domainResponse) {
 	renderKV(out, [][2]string{
 		{"domain", d.Domain}, {"status", d.Status}, {"dns_mode", d.DNSMode},
+		{"usage", domainUsage(d.ReceivingEnabled)},
 		{"receiving_enabled", strconv.FormatBool(d.ReceivingEnabled)},
 		{"webhook_urls", orDash(strings.Join(d.WebhookURLs, ", "))},
 		{"mailboxes", orDash(strings.Join(d.Mailboxes, ", "))},
@@ -268,4 +270,11 @@ func renderDomainRecords(out io.Writer, records []domainDNSRecord) {
 		rows = append(rows, []string{r.Name, r.Type, r.Value})
 	}
 	renderTable(out, []string{"NAME", "TYPE", "VALUE"}, rows)
+}
+
+func domainUsage(receiving bool) string {
+	if receiving {
+		return "Sending and receiving"
+	}
+	return "Sending only"
 }
