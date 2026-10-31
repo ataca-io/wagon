@@ -34,7 +34,13 @@ func TestComplete(t *testing.T) {
 		words []string
 		want  []string
 	}{
-		{"no words", nil, []string{"auth", "completion", "forms", "message", "messages", "send", "send-file", "test", "version", "whoami"}},
+		{"no words", nil, []string{"auth", "completion", "domains", "forms", "message", "messages", "send", "send-file", "test", "version", "whoami"}},
+		{"domains subcommands", []string{"domains", ""}, []string{"create", "delete", "forwards", "get", "list", "records", "update", "verify"}},
+		{"forward subcommands", []string{"domains", "forwards", ""}, []string{"create", "delete", "list", "update"}},
+		{"domain flags", []string{"domains", "update", "example.com", "--clear"}, []string{"--clear-mailboxes", "--clear-webhooks"}},
+		{"forward flags", []string{"domains", "forwards", "update", "example.com", "help", "yavosh@gmail.com", "--"}, []string{"--enabled", "--from-munging"}},
+		{"DNS modes", []string{"domains", "create", "example.com", "--dns-mode", ""}, []string{"records", "delegated"}},
+		{"From rewriting", []string{"domains", "forwards", "create", "example.com", "help", "yavosh@gmail.com", "--from-munging", "a"}, []string{"always", "auto", "arc"}},
 		{"partial verb", []string{"s"}, []string{"send", "send-file"}},
 		{"messages subcommands", []string{"messages", ""}, []string{"deliveries", "list", "opens"}},
 		{"forms subcommands after --json", []string{"--json", "forms", ""}, []string{"create", "delete", "get", "list", "submissions", "update"}},
@@ -181,6 +187,16 @@ func TestCompletionFlagsMatch(t *testing.T) {
 		"forms update":      func(w io.Writer) error { return runFormsUpdate(nil, []string{"tok", "-h"}, io.Discard, w) },
 		"forms submissions": func(w io.Writer) error { return runFormsSubmissions(nil, []string{"tok", "-h"}, io.Discard, w) },
 	}
+	for _, sub := range []string{"list", "get", "create", "update", "delete", "records", "verify"} {
+		verbs["domains "+sub] = func(w io.Writer) error {
+			return runDomains(nil, []string{sub, "-h"}, io.Discard, w)
+		}
+	}
+	for _, sub := range []string{"list", "create", "update", "delete"} {
+		verbs["domains forwards "+sub] = func(w io.Writer) error {
+			return runDomains(nil, []string{"forwards", sub, "-h"}, io.Discard, w)
+		}
+	}
 	for path, fn := range verbs {
 		t.Run(path, func(t *testing.T) {
 			var help bytes.Buffer
@@ -218,9 +234,11 @@ func TestCompletionCommandsMatch(t *testing.T) {
 
 	// The subcommand usage error lists the subcommands as <a|b|c>.
 	subs := map[string]error{
-		"messages": runMessages(nil, nil, io.Discard, io.Discard),
-		"forms":    runForms(nil, nil, io.Discard, io.Discard),
-		"auth":     runAuth([]string{"bogus"}, "", io.Discard),
+		"messages":         runMessages(nil, nil, io.Discard, io.Discard),
+		"forms":            runForms(nil, nil, io.Discard, io.Discard),
+		"auth":             runAuth([]string{"bogus"}, "", io.Discard),
+		"domains":          runDomains(nil, nil, io.Discard, io.Discard),
+		"domains forwards": runDomainForwards(nil, nil, io.Discard, io.Discard),
 	}
 	for verb, err := range subs {
 		m := regexp.MustCompile(`<([\w|-]+)>`).FindStringSubmatch(err.Error())
@@ -229,7 +247,11 @@ func TestCompletionCommandsMatch(t *testing.T) {
 		}
 		want := strings.Split(m[1], "|")
 		slices.Sort(want)
-		if got := slices.Sorted(maps.Keys(completionTree.subs[verb].subs)); !slices.Equal(got, want) {
+		spec := completionTree
+		for word := range strings.FieldsSeq(verb) {
+			spec = spec.subs[word]
+		}
+		if got := slices.Sorted(maps.Keys(spec.subs)); !slices.Equal(got, want) {
 			t.Errorf("%s completion subcommands = %q, usage = %q", verb, got, want)
 		}
 	}

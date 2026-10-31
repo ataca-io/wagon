@@ -66,6 +66,56 @@ wagon completion zsh                            # shell completion script, see b
 - `send-file` sends its file arguments the same way. Flags go before the files. The subject defaults to the file name, or `N files`. The body defaults to `Attached:` and the file names.
 - `wagon test` uses the certificate's first email SAN as the sender.
 
+## Domains
+
+Manage domains owned by your certificate's client identity:
+
+```bash
+wagon domains list --limit 20
+wagon domains list --limit 20 --after CURSOR
+wagon domains create example.com
+wagon domains create example.net --dns-mode delegated
+wagon domains get example.com
+wagon domains records example.com
+wagon domains verify example.com
+wagon domains update example.com --webhook https://example.com/hooks/mail \
+  --mailbox help@example.com --receiving-enabled=true
+wagon domains update example.com --receiving-enabled=false
+wagon domains update example.com --clear-webhooks --clear-mailboxes
+wagon domains delete example.com
+```
+
+Put the domain before flags. Creation defaults to `records` mode and displays the ownership TXT record.
+Delegated mode displays the assigned nameservers and requires server support.
+Configure the returned DNS records before running `verify`.
+Changing `--dns-mode` rotates the ownership proof and pauses the domain until verification succeeds.
+
+`update` changes only supplied fields. Repeat `--webhook` and `--mailbox` to replace each existing list.
+Use `--clear-webhooks` and `--clear-mailboxes` to send empty lists.
+Write boolean values as `--receiving-enabled=false` or `--receiving-enabled=true`.
+Receiving requires verified ownership and a webhook or enabled forwarding rule.
+
+Manage forwarding rules under a domain:
+
+```bash
+wagon domains forwards list example.com --limit 20
+wagon domains forwards list example.com --limit 20 --after CURSOR
+wagon domains forwards create example.com help yavosh@gmail.com --from-munging auto
+wagon domains forwards update example.com help yavosh@gmail.com --enabled=false
+wagon domains forwards update example.com help yavosh@gmail.com --enabled=true
+wagon domains forwards update example.com help yavosh@gmail.com --from-munging=""
+wagon domains forwards delete example.com help yavosh@gmail.com
+```
+
+Put the domain, local part, and destination before flags.
+`--from-munging` accepts `never`, `always`, `auto`, `arc`, or an empty value for the server default.
+Re-enabling a rule can clear a hard-bounce suppression. The response reports any remaining suppression.
+
+Both list commands accept `--limit` from 1 to 100, with a server default of 100.
+Pass the returned `next_cursor` as `--after` for the next page.
+All domain commands support global `--json`. Successful deletes return no body, so JSON mode prints nothing.
+Deleting a domain also removes its forwarding rules. Rail rejects deletion while certificate references remain.
+
 ## Shell completion
 
 `wagon completion <bash|zsh|fish>` prints a completion script. Install it once for your shell:
@@ -99,6 +149,7 @@ Tab completes:
 
 - Verbs, subcommands, and flags.
 - `--status` values.
+- `--dns-mode` and `--from-munging` values.
 - `--from` values, from the email addresses in your certificate.
 - Identity names, for `auth use` and `--identity`.
 - File paths, for `--cert`, `--key`, `--ca`, `--body-file`, `--attach-file`, and the `send-file`, `auth setup`, and `auth add` arguments.
