@@ -1,188 +1,152 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"slices"
-	"strconv"
 	"strings"
 	"time"
 )
 
-const domainDNSTimeout = 5 * time.Second
-
-type domainResolver interface {
-	LookupTXT(context.Context, string) ([]string, error)
-	LookupMX(context.Context, string) ([]*net.MX, error)
-	LookupNS(context.Context, string) ([]*net.NS, error)
+type domainRecordsResponse struct {
+	Domain           string            `json:"domain"`
+	DNSMode          string            `json:"dns_mode"`
+	ReceivingEnabled *bool             `json:"receiving_enabled"`
+	Records          []domainDNSRecord `json:"records"`
 }
 
-type domainRecordValidation struct {
-	Name     string   `json:"name"`
-	Type     string   `json:"type"`
-	Expected string   `json:"expected"`
-	Observed []string `json:"observed"`
-	Status   string   `json:"status"`
-	Error    string   `json:"error,omitempty"`
+type domainCheckResult struct {
+	Check    string `json:"check"`
+	Subject  string `json:"subject"`
+	Status   string `json:"status"`
+	Observed string `json:"observed,omitempty"`
+	Want     string `json:"want,omitempty"`
+	Detail   string `json:"detail,omitempty"`
 }
 
-type dnsValidationError struct{ lookupFailed bool }
+type domainCheckResponse struct {
+	Domain           string              `json:"domain"`
+	DNSMode          string              `json:"dns_mode"`
+	ReceivingEnabled *bool               `json:"receiving_enabled"`
+	CheckedAt        string              `json:"checked_at"`
+	Results          []domainCheckResult `json:"results"`
+}
+
+type dnsValidationError struct{ incomplete bool }
 
 func (e *dnsValidationError) Error() string {
-	if e.lookupFailed {
+	if e.incomplete {
 		return "DNS validation incomplete; see validation results"
 	}
-	return "DNS records do not match; see validation results"
+	return "DNS validation failed; see validation results"
 }
 
-func runDomainRecords(c *client, domain string, out io.Writer, resolver domainResolver) error {
-	var resp struct {
-		Records []domainDNSRecord `json:"records"`
-	}
-	raw, err := c.do(http.MethodGet, domainPath(domain)+"/records", nil, &resp)
+func runDomainRecords(c *client, domain string, out io.Writer) error {
+	var records domainRecordsResponse
+	raw, err := c.do(http.MethodGet, domainPath(domain)+"/records", nil, &records)
 	if err != nil {
 		return err
 	}
 	if !c.jsonOut {
-		_, _ = fmt.Fprintln(out, "Expected DNS records:")
-		renderDomainRecords(out, resp.Records)
-		_, _ = fmt.Fprintln(out, "\nDNS validation (system resolver):")
+		if records.ReceivingEnabled != nil {
+			_, _ = fmt.Fprintf(out, "Usage: %s\n", domainUsage(*records.ReceivingEnabled))
+		}
+		_, _ = fmt.Fprintln(out, "DNS guidance:")
+		renderDomainGuidance(out, records.Records)
+		_, _ = fmt.Fprintln(out, "\nMerge SPF guidance into your existing SPF record. Keep other sending providers.")
+		_, _ = fmt.Fprintln(out, "Keep a valid existing DMARC policy and report destination.")
+		_, _ = fmt.Fprintln(out, "\nDNS validation (rail resolver):")
 	}
-	results := validateDomainRecords(resolver, resp.Records)
-	if c.jsonOut {
-		var report map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &report); err != nil {
-			return fmt.Errorf("decode records: %w", err)
-		}
-		if report == nil {
-			return fmt.Errorf("decode records: expected an object")
-		}
-		validation, err := json.Marshal(results)
-		if err != nil {
-			return fmt.Errorf("encode DNS validation: %w", err)
-		}
-		report["validation"] = validation
-		combined, err := json.Marshal(report)
-		if err != nil {
-			return fmt.Errorf("encode records report: %w", err)
-		}
-		if err := printPretty(out, combined); err != nil {
-			return err
+	var check domainCheckResponse
+	checkRaw, checkErr := c.do(http.MethodPost, domainPath(domain)+"/check", nil, &check)
+	if checkErr != nil {
+		if api, ok := errors.AsType[*apiError](checkErr); ok && (api.status == http.StatusNotFound || api.status == http.StatusMethodNotAllowed || api.status == http.StatusNotImplemented) {
+			checkErr = fmt.Errorf("DNS validation unavailable; upgrade rail to support domain checks, or retry if the domain changed: %w", checkErr)
 		}
 	} else {
-		rows := make([][]string, 0, len(results))
-		for _, r := range results {
-			detail := strings.Join(r.Observed, " | ")
-			if r.Error != "" {
-				detail = r.Error
-			}
-			rows = append(rows, []string{r.Name, r.Type, r.Status, orDash(detail)})
+		checkErr = validateDomainCheck(records, check)
+	}
+	if c.jsonOut {
+		if err := printDomainRecordReport(out, raw, checkRaw, checkErr); err != nil {
+			return err
 		}
-		renderTable(out, []string{"NAME", "TYPE", "STATUS", "OBSERVED / ERROR"}, rows)
-		if len(results) == 0 {
-			_, _ = fmt.Fprintln(out, "No DNS records to validate.")
+	} else if len(check.Results) > 0 {
+		rows := make([][]string, 0, len(check.Results))
+		for _, result := range check.Results {
+			detail := strings.TrimSpace(strings.Join([]string{result.Observed, result.Detail}, " "))
+			rows = append(rows, []string{result.Check, result.Subject, result.Status, orDash(detail)})
+		}
+		renderTable(out, []string{"CHECK", "SUBJECT", "STATUS", "OBSERVED / DETAIL"}, rows)
+	}
+	return checkErr
+}
+
+func validateDomainCheck(records domainRecordsResponse, check domainCheckResponse) error {
+	if records.Domain == "" || (records.DNSMode != "records" && records.DNSMode != "delegated") || records.ReceivingEnabled == nil {
+		return fmt.Errorf("DNS validation incomplete: records metadata is missing; upgrade rail to support domain checks")
+	}
+	if check.Domain != records.Domain || check.DNSMode != records.DNSMode || check.ReceivingEnabled == nil || *check.ReceivingEnabled != *records.ReceivingEnabled {
+		return fmt.Errorf("DNS validation incomplete: domain settings changed or response metadata is missing; retry the command")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, check.CheckedAt); err != nil {
+		return fmt.Errorf("DNS validation incomplete: invalid checked_at: %w", err)
+	}
+	if len(check.Results) == 0 {
+		return fmt.Errorf("DNS validation incomplete: server returned no results")
+	}
+	var failed, incomplete bool
+	for _, result := range check.Results {
+		if result.Check == "" || result.Subject == "" {
+			incomplete = true
+		}
+		switch result.Status {
+		case "pass", "warn", "skip":
+		case "fail":
+			failed = true
+		default:
+			incomplete = true
 		}
 	}
-	var failed, lookupFailed bool
-	for _, r := range results {
-		failed = failed || r.Status != "match"
-		lookupFailed = lookupFailed || r.Status == "error"
-	}
-	if failed {
-		return &dnsValidationError{lookupFailed: lookupFailed}
+	if failed || incomplete {
+		return &dnsValidationError{incomplete: incomplete}
 	}
 	return nil
 }
 
-// validateDomainRecords checks each expected value against a DNS answer.
-// Shared name/type lookups reuse one answer so a report stays consistent.
-func validateDomainRecords(resolver domainResolver, records []domainDNSRecord) []domainRecordValidation {
-	type query struct{ name, kind string }
-	type answer struct {
-		values []string
-		err    error
+// Preserve unknown API fields and full numeric precision in both responses.
+// Validation errors accompany the report instead of discarding DNS guidance.
+func printDomainRecordReport(out io.Writer, records, check []byte, checkErr error) error {
+	var report map[string]json.RawMessage
+	if err := json.Unmarshal(records, &report); err != nil {
+		return fmt.Errorf("decode records: %w", err)
 	}
-	cache := make(map[query]answer)
-	results := make([]domainRecordValidation, 0, len(records))
+	if report == nil {
+		return fmt.Errorf("decode records: expected an object")
+	}
+	if len(check) == 0 {
+		check = []byte("null")
+	}
+	report["validation"] = check
+	if checkErr != nil {
+		detail, err := json.Marshal(checkErr.Error())
+		if err != nil {
+			return fmt.Errorf("encode validation error: %w", err)
+		}
+		report["validation_error"] = detail
+	}
+	combined, err := json.Marshal(report)
+	if err != nil {
+		return fmt.Errorf("encode records report: %w", err)
+	}
+	return printPretty(out, combined)
+}
+
+func renderDomainGuidance(out io.Writer, records []domainDNSRecord) {
+	rows := make([][]string, 0, len(records))
 	for _, record := range records {
-		q := query{name: dnsHostname(record.Name) + ".", kind: strings.ToUpper(record.Type)}
-		a, ok := cache[q]
-		if !ok {
-			ctx, cancel := context.WithTimeout(context.Background(), domainDNSTimeout)
-			a.values, a.err = lookupDomainRecord(ctx, resolver, q.name, q.kind)
-			cancel()
-			slices.Sort(a.values)
-			cache[q] = a
-		}
-		result := domainRecordValidation{
-			Name: record.Name, Type: record.Type, Expected: record.Value,
-			Observed: a.values, Status: "missing",
-		}
-		if a.err != nil {
-			if dnsErr, ok := errors.AsType[*net.DNSError](a.err); !ok || !dnsErr.IsNotFound {
-				result.Status = "error"
-				result.Error = a.err.Error()
-			}
-		} else if len(a.values) > 0 {
-			result.Status = "mismatch"
-			for _, value := range a.values {
-				if dnsRecordValue(q.kind, value) == dnsRecordValue(q.kind, record.Value) {
-					result.Status = "match"
-					break
-				}
-			}
-		}
-		results = append(results, result)
+		rows = append(rows, []string{record.Name, record.Type, orDash(record.Purpose), orDash(record.Requirement), record.Value})
 	}
-	return results
-}
-
-func lookupDomainRecord(ctx context.Context, resolver domainResolver, name, kind string) ([]string, error) {
-	values := make([]string, 0)
-	switch kind {
-	case "TXT":
-		// LookupTXT joins chunks within each TXT record, including long DKIM keys.
-		txt, err := resolver.LookupTXT(ctx, name)
-		return append(values, txt...), err
-	case "MX":
-		mx, err := resolver.LookupMX(ctx, name)
-		for _, r := range mx {
-			values = append(values, fmt.Sprintf("%d %s", r.Pref, r.Host))
-		}
-		return values, err
-	case "NS":
-		ns, err := resolver.LookupNS(ctx, name)
-		for _, r := range ns {
-			values = append(values, r.Host)
-		}
-		return values, err
-	default:
-		return values, fmt.Errorf("unsupported DNS record type %q", kind)
-	}
-}
-
-func dnsHostname(value string) string {
-	return strings.ToLower(strings.TrimSuffix(value, "."))
-}
-
-// TXT values match exactly. Hostnames ignore case and a trailing dot;
-// MX values must also have the same numeric priority.
-func dnsRecordValue(kind, value string) string {
-	switch kind {
-	case "NS":
-		return dnsHostname(value)
-	case "MX":
-		fields := strings.Fields(value)
-		if len(fields) == 2 {
-			if priority, err := strconv.ParseUint(fields[0], 10, 16); err == nil {
-				return fmt.Sprintf("%d %s", priority, dnsHostname(fields[1]))
-			}
-		}
-	}
-	return value
+	renderTable(out, []string{"NAME", "TYPE", "PURPOSE", "REQUIREMENT", "VALUE"}, rows)
 }

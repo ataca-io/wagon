@@ -91,13 +91,27 @@ Delegated mode displays the assigned nameservers and requires server support.
 Configure the returned DNS records before running `verify`.
 Changing `--dns-mode` rotates the ownership proof and pauses the domain until verification succeeds.
 
-`records` prints the expected records, then checks published TXT, MX, and NS values through your system DNS resolver.
-Each result shows `match`, `missing`, `mismatch`, or `error`, with the observed values or lookup error.
-Lookups have a five-second timeout. Results reflect the resolver's cache and may lag recent DNS changes.
-TXT values must match exactly; hostname comparisons ignore case and trailing dots. MX priorities must match too.
-This checks whether each expected value is published. It does not evaluate SPF rules or perform a complete DMARC audit.
-The command does not change rail's ownership status; use `verify` for that.
-JSON output retains `records` and adds a `validation` array. Failed checks still produce the report before returning an error.
+`whoami`, `domains list`, and `domains get` show each domain's usage: **Sending only** or **Sending and receiving**.
+Usage comes from `receiving_enabled`. Ownership status remains separate, and certificate sender permissions still apply.
+Sending-only domains can keep externally hosted mailboxes and their existing MX records.
+
+`records` prints DNS guidance with each record's purpose and requirement, then requests validation from rail.
+Rail omits MX guidance for sending-only domains and skips their MX check.
+Merge SPF guidance into your existing SPF record to retain other sending providers.
+Keep a valid existing DMARC policy and report destination; the suggested value is an example.
+Rail evaluates SPF for its configured mail-host IPs, falling back to mail-host DNS.
+It compares published DKIM keys with its stored public keys.
+Delegated ownership checks use parent nameserver referrals.
+Results show `pass`, `warn`, `fail`, `skip`, or `error`, with observed values and diagnostic details.
+Warnings and skipped checks do not fail the command. DNS errors produce an incomplete result.
+Results reflect rail's resolver cache and may lag recent DNS changes.
+The command does not change ownership status; use `verify` for that.
+
+This requires rail's `POST /api/v1/domains/{domain}/check` endpoint. Deploy the rail update before upgrading wagon.
+JSON output preserves the records response and adds `validation`, containing the complete server check response.
+The previous local check's `validation` array is now an object with domain metadata, `checked_at`, and `results`.
+Failed checks still print the report and include `validation_error`.
+If the check request fails, `validation` is `null` and DNS guidance remains available.
 
 `update` changes only supplied fields. Repeat `--webhook` and `--mailbox` to replace each existing list.
 Use `--clear-webhooks` and `--clear-mailboxes` to send empty lists.
@@ -193,8 +207,8 @@ For `--server` and `--ca`, a flag overrides the environment, which overrides the
 | 1 | Usage error |
 | 2 | Auth failure: TLS handshake, `401`, or `403` |
 | 3 | Any other `4xx` |
-| 4 | A `5xx`, transport error, or DNS lookup failure |
-| 5 | Expected DNS records are missing or mismatched |
+| 4 | A `5xx`, transport error, or incomplete DNS validation |
+| 5 | DNS validation reported a configuration failure |
 
 ## Development
 

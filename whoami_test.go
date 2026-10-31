@@ -93,7 +93,7 @@ func TestWhoamiDomains(t *testing.T) {
 						t.Errorf("missing domain %q: %s", domain, stdout.String())
 					}
 				}
-				if len(tt.domains) > 0 && (!strings.Contains(stdout.String(), "verified") || !strings.Contains(stdout.String(), "RECEIVING")) {
+				if len(tt.domains) > 0 && (!strings.Contains(stdout.String(), "verified") || !strings.Contains(stdout.String(), "Sending and receiving")) {
 					t.Errorf("missing domain details: %s", stdout.String())
 				}
 			})

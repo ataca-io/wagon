@@ -12,3 +12,6 @@ go run . --server https://smtp.ataca.io --cert c.crt --key c.key whoami
 - Go conventions follow rail's `AGENTS.md` and `docs/code-style.md`: `errors.AsType`, `cmp.Or`, table-driven stdlib tests, comments of 2 to 3 lines at most.
 - A `v*` tag runs `release.yml`; it needs green CI on the tagged commit.
 - Before a push: `goimports -w . && golangci-lint run ./... && go test -race ./...`.
+
+- Domain usage derives from `receiving_enabled`; ownership status and sender permissions remain separate.
+- `domains records` displays guidance and calls rail's read-only `/api/v1/domains/{domain}/check`. Keep DNS policy validation on rail.
