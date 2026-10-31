@@ -71,6 +71,24 @@ var completionTree = completionSpec{
 			"delete":      {},
 			"submissions": {flags: map[string]bool{"id": true, "before": true, "limit": true}},
 		}},
+		"domains": {subs: map[string]completionSpec{
+			"list":   {flags: map[string]bool{"limit": true, "after": true}},
+			"get":    {},
+			"create": {flags: map[string]bool{"dns-mode": true}},
+			"update": {flags: map[string]bool{
+				"dns-mode": true, "receiving-enabled": false, "webhook": true, "mailbox": true,
+				"clear-webhooks": false, "clear-mailboxes": false,
+			}},
+			"delete":  {},
+			"records": {},
+			"verify":  {},
+			"forwards": {subs: map[string]completionSpec{
+				"list":   {flags: map[string]bool{"limit": true, "after": true}},
+				"create": {flags: map[string]bool{"from-munging": true}},
+				"update": {flags: map[string]bool{"from-munging": true, "enabled": false}},
+				"delete": {},
+			}},
+		}},
 		"test": {flags: map[string]bool{"to": true}},
 		"auth": {subs: map[string]completionSpec{
 			"setup": {files: true},
@@ -157,6 +175,10 @@ func runComplete(words []string, out io.Writer) {
 	switch {
 	case pendingFlag == "status":
 		candidates = statusValues
+	case pendingFlag == "dns-mode":
+		candidates = []string{"records", "delegated"}
+	case pendingFlag == "from-munging":
+		candidates = []string{"never", "always", "auto", "arc"}
 	case pendingFlag == "from":
 		candidates = certSenders(certPath, identity)
 	case pendingFlag == "identity":
