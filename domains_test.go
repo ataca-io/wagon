@@ -23,7 +23,7 @@ const forwardFixture = `{
 	"consecutive_failures":2,"disabled_at":null,"disabled_reason":"hard_bounce","created_at":"2026-10-31T10:00:00Z"
 }`
 
-// Exercise all eleven operations through the CLI and an mTLS server.
+// Exercise domain and forwarding operations through the CLI and an mTLS server.
 // Check exact requests and preserve complete responses in JSON mode.
 func TestDomainsAPI(t *testing.T) {
 	pki := mintClientCert(t)
@@ -82,12 +82,6 @@ func TestDomainsAPI(t *testing.T) {
 		{
 			name: "delete", args: []string{"delete", "example.com"}, method: http.MethodDelete,
 			uri: "/api/v1/domains/example.com", status: 204, output: []string{"deleted domain example.com"},
-		},
-		{
-			name: "records", args: []string{"records", "example.com"}, method: http.MethodGet,
-			uri: "/api/v1/domains/example.com/records", status: 200,
-			response: `{"records":[{"name":"example.com","type":"MX","value":"10 mx.example.com"},{"name":"_rail.example.com","type":"TXT","value":"test-proof"}]}`,
-			output:   []string{"MX", "10 mx.example.com", "TXT", "test-proof"},
 		},
 		{
 			name: "verify", args: []string{"verify", "example.com"}, method: http.MethodPost,

@@ -163,6 +163,9 @@ func exitCode(err error) int {
 	if _, ok := errors.AsType[*authError](err); ok {
 		return 2
 	}
+	if validation, ok := errors.AsType[*dnsValidationError](err); ok && !validation.lookupFailed {
+		return 5
+	}
 	if api, ok := errors.AsType[*apiError](err); ok {
 		switch {
 		case api.status == http.StatusUnauthorized || api.status == http.StatusForbidden:

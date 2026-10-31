@@ -37,7 +37,7 @@ wagon --identity default whoami          # use another identity for one call
 `--server` defaults to `https://smtp.ataca.io`, and the certificate pair defaults to the active identity in `~/.wagon`, so the rest needs no flags:
 
 ```bash
-wagon whoami                                    # identity, allowed senders, webhooks
+wagon whoami                                    # identity, allowed senders, webhooks, owned domains
 wagon send --from app@ataca.io --to user@example.com \
   --subject "Your report" --text "It is ready."
 wagon send --from app@ataca.io --to user@example.com \
@@ -53,7 +53,7 @@ wagon messages opens 01jx...
 wagon forms list
 wagon forms create --name contact --from noreply@ataca.io \
   --to you@example.com --subject "Contact form" --redirect https://example.com/thanks
-wagon --json whoami                             # raw JSON, for any verb
+wagon --json whoami                             # identity JSON with an added domains array
 wagon completion zsh                            # shell completion script, see below
 ```
 
@@ -65,6 +65,7 @@ wagon completion zsh                            # shell completion script, see b
 - `--attach-file` mints one upload grant, uploads each file, and sends the resulting ids as attachments. A send takes up to 10 files.
 - `send-file` sends its file arguments the same way. Flags go before the files. The subject defaults to the file name, or `N files`. The body defaults to `Attached:` and the file names.
 - `wagon test` uses the certificate's first email SAN as the sender.
+- `whoami` lists all owned domains, following pagination. JSON output preserves identity fields and adds the complete domain records.
 
 ## Domains
 
@@ -89,6 +90,14 @@ Put the domain before flags. Creation defaults to `records` mode and displays th
 Delegated mode displays the assigned nameservers and requires server support.
 Configure the returned DNS records before running `verify`.
 Changing `--dns-mode` rotates the ownership proof and pauses the domain until verification succeeds.
+
+`records` prints the expected records, then checks published TXT, MX, and NS values through your system DNS resolver.
+Each result shows `match`, `missing`, `mismatch`, or `error`, with the observed values or lookup error.
+Lookups have a five-second timeout. Results reflect the resolver's cache and may lag recent DNS changes.
+TXT values must match exactly; hostname comparisons ignore case and trailing dots. MX priorities must match too.
+This checks whether each expected value is published. It does not evaluate SPF rules or perform a complete DMARC audit.
+The command does not change rail's ownership status; use `verify` for that.
+JSON output retains `records` and adds a `validation` array. Failed checks still produce the report before returning an error.
 
 `update` changes only supplied fields. Repeat `--webhook` and `--mailbox` to replace each existing list.
 Use `--clear-webhooks` and `--clear-mailboxes` to send empty lists.
@@ -184,7 +193,8 @@ For `--server` and `--ca`, a flag overrides the environment, which overrides the
 | 1 | Usage error |
 | 2 | Auth failure: TLS handshake, `401`, or `403` |
 | 3 | Any other `4xx` |
-| 4 | A `5xx` or a transport error |
+| 4 | A `5xx`, transport error, or DNS lookup failure |
+| 5 | Expected DNS records are missing or mismatched |
 
 ## Development
 

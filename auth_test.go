@@ -161,7 +161,7 @@ func TestRunAuthShow(t *testing.T) {
 // The installed pair must carry a real request, with no --cert or --key flag.
 func TestRunUsesInstalledKeys(t *testing.T) {
 	pki := mintClientCert(t)
-	url, caFile := newTLSServer(t, jsonHandler(http.StatusOK, map[string]any{"client_id": "testclient"}), pki.clientCAs)
+	url, caFile := newTLSServer(t, whoHandler(http.StatusOK, map[string]any{"client_id": "testclient"}), pki.clientCAs)
 
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("RAIL_CERT", "")
@@ -369,7 +369,7 @@ func TestRunAuthShowIdentity(t *testing.T) {
 // The identity flag, the environment, and the config pick different pairs.
 func TestRunSelectsIdentity(t *testing.T) {
 	work, other := mintClientCert(t), mintClientCert(t)
-	url, caFile := newTLSServer(t, jsonHandler(http.StatusOK, map[string]any{"client_id": "testclient"}), work.clientCAs)
+	url, caFile := newTLSServer(t, whoHandler(http.StatusOK, map[string]any{"client_id": "testclient"}), work.clientCAs)
 
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("RAIL_CERT", "")
