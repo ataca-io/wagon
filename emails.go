@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 )
 
 // emailCheckResponse contains the assessment fields shown in human output.
@@ -63,7 +64,7 @@ func runEmails(c *client, args []string, out, stderr io.Writer) error {
 	if resp.SMTP.RecipientRejected != nil {
 		rejected = fmt.Sprintf("%t", *resp.SMTP.RecipientRejected)
 	}
-	renderKV(out, [][2]string{
+	fields := [][2]string{
 		{"email", resp.Email},
 		{"status", resp.Status},
 		{"reason", resp.Reason},
@@ -80,6 +81,10 @@ func runEmails(c *client, args []string, out, stderr io.Writer) error {
 		{"next_probe_at", orDash(resp.SMTP.NextProbeAt)},
 		{"evidence_source", resp.Evidence.Source},
 		{"last_delivered_at", orDash(resp.Evidence.LastDeliveredAt)},
-	})
+	}
+	if resp.Status == "unknown" && resp.Reason == "recipient_accepted" && resp.SMTP.Result == "accepted" {
+		fields = slices.Insert(fields, 3, [2]string{"assessment", "SMTP accepted the recipient; mailbox existence is unconfirmed."})
+	}
+	renderKV(out, fields)
 	return nil
 }
