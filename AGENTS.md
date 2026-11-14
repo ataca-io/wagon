@@ -11,6 +11,7 @@ go run . --server https://smtp.ataca.io --cert c.crt --key c.key whoami
 - The API contract lives in rail (`internal/httpd/openapi.yaml`). A rail API change that wagon uses lands there first.
 - Go conventions follow rail's `AGENTS.md` and `docs/code-style.md`: `errors.AsType`, `cmp.Or`, table-driven stdlib tests, comments of 2 to 3 lines at most.
 - A `v*` tag runs `release.yml`; it needs green CI on the tagged commit.
+- Releases include Linux amd64/arm64, macOS arm64, and Windows amd64 ZIPs, plus `install.sh` and `SHA256SUMS`. Keep installer detection aligned.
 - Before a push: `goimports -w . && golangci-lint run ./... && go test -race ./...`.
 
 - Domain usage derives from `receiving_enabled`; ownership status and sender permissions remain separate.
