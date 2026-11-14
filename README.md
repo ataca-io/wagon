@@ -201,7 +201,15 @@ wagon emails check user@example.com
 
 The response reports routing, domain category, SMTP results, and delivery evidence.
 An HTTP `200` response produces exit code `0`, including assessments with `invalid`, `undeliverable`, or `unknown` status.
-SMTP acceptance does not prove mailbox ownership.
+For `unknown`/`recipient_accepted` with SMTP result `accepted`, human output adds an `assessment` row after `reason`:
+
+```text
+SMTP accepted the recipient; mailbox existence is unconfirmed.
+```
+
+The status remains `unknown` because SMTP acceptance does not prove mailbox existence or ownership.
+Catch-all servers can accept nonexistent recipients.
+JSON output preserves the complete server response without adding this explanation.
 
 To verify mailbox ownership:
 

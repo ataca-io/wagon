@@ -218,6 +218,67 @@ func TestEmailCheckAssessments(t *testing.T) {
 	}
 }
 
+func TestEmailCheckProvisionalAcceptance(t *testing.T) {
+	pki := mintClientCert(t)
+	for _, tt := range []struct {
+		name, status, reason, smtp string
+		wantAssessment             bool
+	}{
+		{"provisional acceptance", "unknown", "recipient_accepted", "accepted", true},
+		{"probe disabled", "unknown", "probe_disabled", "not_run", false},
+		{"other unknown reason", "unknown", "no_delivery_evidence", "accepted", false},
+		{"valid", "valid", "recipient_accepted", "accepted", false},
+		{"invalid", "invalid", "recipient_accepted", "accepted", false},
+		{"recipient not accepted", "unknown", "recipient_accepted", "rejected", false},
+	} {
+		for _, jsonOut := range []bool{false, true} {
+			name := tt.name
+			if jsonOut {
+				name += " JSON"
+			}
+			t.Run(name, func(t *testing.T) {
+				response := strings.NewReplacer(
+					`"status":"unknown"`, `"status":"`+tt.status+`"`,
+					`"reason":"no_delivery_evidence"`, `"reason":"`+tt.reason+`"`,
+					`"result":"unknown"`, `"result":"`+tt.smtp+`"`,
+					`"reason":"probe_disabled"`, `"reason":"`+tt.reason+`"`,
+				).Replace(emailCheckFixture)
+				server, ca := newTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					_, _ = io.WriteString(w, response)
+				}), pki.clientCAs)
+				args := baseArgs(server, pki, ca)
+				if jsonOut {
+					args = append(args, "--json")
+				}
+				var stdout, stderr bytes.Buffer
+				if code := run(append(args, "emails", "check", "person@example.com"), &stdout, &stderr); code != 0 {
+					t.Fatalf("exit = %d, want 0; stderr = %s", code, stderr.String())
+				}
+				if jsonOut {
+					assertDomainJSON(t, stdout.Bytes(), response)
+					return
+				}
+				output := stdout.String()
+				assessment := "SMTP accepted the recipient; mailbox existence is unconfirmed."
+				if got := strings.Contains(output, "assessment:"); got != tt.wantAssessment {
+					t.Errorf("output = %s, assessment row = %v, want %v", output, got, tt.wantAssessment)
+				}
+				if got := strings.Contains(output, assessment); got != tt.wantAssessment {
+					t.Errorf("output = %s, provisional explanation = %v, want %v", output, got, tt.wantAssessment)
+				}
+				for _, want := range []string{"status:              " + tt.status, "reason:              " + tt.reason, "smtp_result:         " + tt.smtp} {
+					if !strings.Contains(output, want) {
+						t.Errorf("output = %s, want %q", output, want)
+					}
+				}
+				if tt.wantAssessment && !strings.Contains(output, "reason:              "+tt.reason+"\nassessment:") {
+					t.Errorf("output = %s, want assessment immediately after reason", output)
+				}
+			})
+		}
+	}
+}
+
 func TestEmailAPIUsage(t *testing.T) {
 	tests := [][]string{
 		{"emails"}, {"emails", "bogus"}, {"emails", "check"}, {"emails", "check", ""},
