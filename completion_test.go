@@ -34,7 +34,11 @@ func TestComplete(t *testing.T) {
 		words []string
 		want  []string
 	}{
-		{"no words", nil, []string{"auth", "completion", "domains", "forms", "message", "messages", "send", "send-file", "test", "version", "whoami"}},
+		{"no words", nil, []string{"auth", "completion", "domains", "email-verifications", "emails", "forms", "message", "messages", "send", "send-file", "test", "version", "whoami"}},
+		{"email subcommands", []string{"emails", ""}, []string{"check"}},
+		{"verification subcommands", []string{"email-verifications", ""}, []string{"confirm", "create", "get"}},
+		{"verification create flags", []string{"email-verifications", "create", "--"}, []string{"--email", "--from", "--purpose", "--request-id", "--subject-id"}},
+		{"verification confirm flags", []string{"email-verifications", "confirm", "id", "--"}, []string{"--code"}},
 		{"domains subcommands", []string{"domains", ""}, []string{"create", "delete", "forwards", "get", "list", "records", "update", "verify"}},
 		{"forward subcommands", []string{"domains", "forwards", ""}, []string{"create", "delete", "list", "update"}},
 		{"domain flags", []string{"domains", "update", "example.com", "--clear"}, []string{"--clear-mailboxes", "--clear-webhooks"}},
@@ -177,6 +181,7 @@ var flagLine = regexp.MustCompile(`(?m)^  -([\w-]+)( \S+)?$`)
 func TestCompletionFlagsMatch(t *testing.T) {
 	type runFunc func(stderr io.Writer) error
 	verbs := map[string]runFunc{
+		"emails check":      func(w io.Writer) error { return runEmails(nil, []string{"check", "-h"}, io.Discard, w) },
 		"whoami":            func(w io.Writer) error { return runWhoami(nil, []string{"-h"}, io.Discard, w) },
 		"send":              func(w io.Writer) error { return runSend(nil, []string{"-h"}, io.Discard, w) },
 		"send-file":         func(w io.Writer) error { return runSendFile(nil, []string{"-h"}, io.Discard, w) },
@@ -186,6 +191,11 @@ func TestCompletionFlagsMatch(t *testing.T) {
 		"forms create":      func(w io.Writer) error { return runFormsCreate(nil, []string{"-h"}, io.Discard, w) },
 		"forms update":      func(w io.Writer) error { return runFormsUpdate(nil, []string{"tok", "-h"}, io.Discard, w) },
 		"forms submissions": func(w io.Writer) error { return runFormsSubmissions(nil, []string{"tok", "-h"}, io.Discard, w) },
+	}
+	for _, sub := range []string{"create", "get", "confirm"} {
+		verbs["email-verifications "+sub] = func(w io.Writer) error {
+			return runEmailVerifications(nil, []string{sub, "-h"}, io.Discard, w)
+		}
 	}
 	for _, sub := range []string{"list", "get", "create", "update", "delete", "records", "verify"} {
 		verbs["domains "+sub] = func(w io.Writer) error {
@@ -234,11 +244,13 @@ func TestCompletionCommandsMatch(t *testing.T) {
 
 	// The subcommand usage error lists the subcommands as <a|b|c>.
 	subs := map[string]error{
-		"messages":         runMessages(nil, nil, io.Discard, io.Discard),
-		"forms":            runForms(nil, nil, io.Discard, io.Discard),
-		"auth":             runAuth([]string{"bogus"}, "", io.Discard),
-		"domains":          runDomains(nil, nil, io.Discard, io.Discard),
-		"domains forwards": runDomainForwards(nil, nil, io.Discard, io.Discard),
+		"emails":              runEmails(nil, nil, io.Discard, io.Discard),
+		"email-verifications": runEmailVerifications(nil, nil, io.Discard, io.Discard),
+		"messages":            runMessages(nil, nil, io.Discard, io.Discard),
+		"forms":               runForms(nil, nil, io.Discard, io.Discard),
+		"auth":                runAuth([]string{"bogus"}, "", io.Discard),
+		"domains":             runDomains(nil, nil, io.Discard, io.Discard),
+		"domains forwards":    runDomainForwards(nil, nil, io.Discard, io.Discard),
 	}
 	for verb, err := range subs {
 		m := regexp.MustCompile(`<([\w|-]+)>`).FindStringSubmatch(err.Error())

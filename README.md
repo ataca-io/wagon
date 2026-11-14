@@ -67,6 +67,33 @@ wagon completion zsh                            # shell completion script, see b
 - `wagon test` uses the certificate's first email SAN as the sender.
 - `whoami` lists all owned domains, following pagination. JSON output preserves identity fields and adds the complete domain records.
 
+## Email checks and verification
+
+```bash
+wagon emails check person@example.com
+wagon email-verifications create --email person@example.com \
+  --purpose signup --subject-id account-123 --request-id signup-123
+wagon email-verifications get ID
+wagon email-verifications confirm ID --code 012345
+wagon --json emails check person@example.com
+```
+
+These commands require rail's `email_checks` feature.
+`emails check` reports routing, domain category, SMTP results, and delivery evidence.
+An HTTP 200 assessment exits successfully, including `invalid`, `undeliverable`, and `unknown` results.
+An SMTP acceptance does not prove mailbox ownership.
+
+`email-verifications create` sends a six-digit ownership code.
+`--from` defaults to the certificate's first sender. `--request-id` defaults to a generated value.
+Reuse an accepted request ID to retry without sending another message.
+Use a new request ID with the same email, sender, purpose, and subject to resend.
+Resending preserves the challenge expiry and failed-attempt budget. Check `resend_at` before resending.
+Codes expire after ten minutes and allow five failed attempts.
+`get` reports `pending`, `verified`, `expired`, or `locked` status.
+`confirm` consumes the code. Keep leading zeros when entering it.
+Verification applies to the authenticated client, email, purpose, and application subject.
+All commands support global `--json`, which preserves the complete server response.
+
 ## Domains
 
 Manage domains owned by your certificate's client identity:

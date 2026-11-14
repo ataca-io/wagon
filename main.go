@@ -113,6 +113,10 @@ func dispatch(c *client, verb string, args []string, stdout, stderr io.Writer) e
 		return runForms(c, args, stdout, stderr)
 	case "domains":
 		return runDomains(c, args, stdout, stderr)
+	case "emails":
+		return runEmails(c, args, stdout, stderr)
+	case "email-verifications":
+		return runEmailVerifications(c, args, stdout, stderr)
 	case "test":
 		return runTest(c, args, stdout, stderr)
 	default:
@@ -122,7 +126,7 @@ func dispatch(c *client, verb string, args []string, stdout, stderr io.Writer) e
 
 func usage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "Usage: wagon [--server URL] [--identity NAME] [--cert FILE] [--key FILE] [--ca FILE] [--json] <verb> [args]")
-	_, _ = fmt.Fprintln(w, "Verbs: whoami, send, send-file, message, messages, forms, domains, test, auth, version, completion")
+	_, _ = fmt.Fprintln(w, "Verbs: whoami, send, send-file, message, messages, forms, domains, emails, email-verifications, test, auth, version, completion")
 	_, _ = fmt.Fprintln(w, "Env fallbacks: RAIL_SERVER, RAIL_CERT, RAIL_KEY, RAIL_CA, WAGON_IDENTITY")
 	_, _ = fmt.Fprintln(w, "Defaults: --server "+defaultServer+", --cert and --key from the active identity in ~/.wagon (see `wagon auth setup`)")
 }
