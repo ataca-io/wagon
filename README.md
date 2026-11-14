@@ -1,267 +1,508 @@
 # wagon
 
-`wagon` is the client CLI for [rail](https://smtp.ataca.io/agents), a transactional email server. It wraps rail's `/who` and `/api/v1/*` endpoints with your client certificate, so you never hand-roll an mTLS call.
+`wagon` is the command-line interface (CLI) for [rail](https://smtp.ataca.io/agents), a transactional email server.
+It uses your client certificate to authenticate requests with mutual TLS (mTLS).
+It calls rail's `/who` and `/api/v1/*` endpoints.
 
-## Install
+## Install wagon
 
-On Linux (amd64 or arm64) or macOS (Apple silicon), install the latest release:
+Prebuilt ZIP archives are available for these platforms:
+
+| Operating system | Architecture |
+|---|---|
+| Linux | amd64, arm64 |
+| macOS | arm64 (Apple silicon) |
+| Windows | amd64 (x64) |
+
+### Linux and macOS
+
+Before you run the installer, install `curl`, `unzip`, and either `sha256sum` or `shasum`.
+To install the latest release, run:
 
 ```sh
 curl -fsSL https://github.com/ataca-io/wagon/releases/latest/download/install.sh | sh
 ```
 
-The installer verifies the ZIP's SHA-256 checksum and installs `wagon` into `~/.local/bin` without sudo.
-It requires `curl`, `unzip`, and either `sha256sum` or `shasum`.
+The installer verifies the ZIP archive's SHA-256 checksum and installs `wagon` into `~/.local/bin` without `sudo`.
 If needed, it prints a command to add that directory to `PATH`.
-Run the same command to upgrade to the latest release.
+To upgrade to the latest release, run the same command again.
 
-On Windows x64, [download the latest ZIP](https://github.com/ataca-io/wagon/releases/latest/download/wagon-windows-amd64.zip).
-Extract `wagon.exe` into a directory on your `PATH`.
+### Windows
 
-With Go installed, you can also build from source:
+1. [Download the latest Windows x64 ZIP archive](https://github.com/ataca-io/wagon/releases/latest/download/wagon-windows-amd64.zip).
+2. Extract `wagon.exe` into a directory on your `PATH`.
 
-```bash
+For other prebuilt archives, see [wagon releases](https://github.com/ataca-io/wagon/releases).
+
+### Install with Go
+
+With Go 1.27 or later installed, run:
+
+```sh
 go install github.com/ataca-io/wagon@latest
 ```
 
-All ZIP archives are available on [Releases](https://github.com/ataca-io/wagon/releases).
-Builds cover Linux amd64 and arm64, macOS arm64, and Windows amd64.
+## Set up authentication
 
-## Set up
+Before you start, obtain a rail client certificate and its matching private key.
 
-Point wagon at your rail client certificate once:
+1. Install the certificate and private key:
 
-```bash
-wagon auth setup my-app.crt my-app.key   # copies both into ~/.wagon, mode 0600
-wagon auth                               # show the active certificate and its expiry
+   ```sh
+   wagon auth setup CERT_FILE KEY_FILE
+   ```
+
+   Replace *`CERT_FILE`* and *`KEY_FILE`* with the paths to your certificate and private key.
+   The command rejects a certificate and private key that do not match.
+   On Unix systems, it copies both files with `0600` permissions into `~/.wagon`, created with `0700` permissions.
+
+2. Inspect the active certificate and its expiration date:
+
+   ```sh
+   wagon auth
+   ```
+
+3. Check your server identity, allowed senders, webhooks, and owned domains:
+
+   ```sh
+   wagon whoami
+   ```
+
+By default, wagon connects to `https://smtp.ataca.io` and uses the active identity in `~/.wagon`.
+`whoami` retrieves all pages of owned domains.
+
+### Manage multiple identities
+
+To add and select a named identity:
+
+1. Add the identity:
+
+   ```sh
+   wagon auth add work CERT_FILE KEY_FILE
+   ```
+
+   Replace *`CERT_FILE`* and *`KEY_FILE`* with the certificate and private key paths for the `work` identity.
+   `auth add` installs the identity without changing the active identity.
+
+2. Select the active identity:
+
+   ```sh
+   wagon auth use work
+   ```
+
+3. List identities and check which identity is active:
+
+   ```sh
+   wagon auth list
+   ```
+
+To select an identity for one command, use the global `--identity` flag:
+
+```sh
+wagon --identity default whoami
 ```
 
-`wagon auth setup` refuses a certificate and key that do not match. It writes both at mode 0600 under a 0700 `~/.wagon`.
+`auth setup` installs the `default` identity in `~/.wagon`.
+Other identities use `~/.wagon/identities/IDENTITY_NAME/`.
+Replace *`IDENTITY_NAME`* with the identity name.
+`~/.wagon/config.json` records the active identity.
 
-To keep several certificates, add named identities and switch between them:
+Identity names must contain 1 to 64 characters.
+Start with a lowercase letter or digit.
+For subsequent characters, use lowercase letters, digits, `.`, `_`, or `-`.
 
-```bash
-wagon auth add work work.crt work.key    # installs the identity "work"
-wagon auth use work                      # makes "work" the active identity
-wagon auth list                          # lists identities, marks the active one
-wagon --identity default whoami          # use another identity for one call
-```
+## Send email
 
-`wagon auth setup` installs the identity named `default` in `~/.wagon`. Other identities live in `~/.wagon/identities/<name>/`. `~/.wagon/config.json` records the active identity. `wagon auth add` does not change it. Names are 1 to 64 characters: a lowercase letter or digit, then lowercase letters, digits, `.`, `_`, and `-`.
+To send a text message, run:
 
-## Use
-
-`--server` defaults to `https://smtp.ataca.io`, and the certificate pair defaults to the active identity in `~/.wagon`, so the rest needs no flags:
-
-```bash
-wagon whoami                                    # identity, allowed senders, webhooks, owned domains
-wagon send --from app@ataca.io --to user@example.com \
+```sh
+wagon send --to user@example.com \
   --subject "Your report" --text "It is ready."
-wagon send --from app@ataca.io --to user@example.com \
+```
+
+By default, `send`, `send-file`, and `forms create` use the first sender address in your certificate.
+To select another authorized sender, add `--from SENDER_EMAIL`.
+Replace *`SENDER_EMAIL`* with an address permitted by your certificate.
+If the certificate does not allow the sender, wagon reports the allowed addresses.
+
+To read the body from a file and include attachments, run:
+
+```sh
+wagon send --to user@example.com \
   --subject "Your report" --body-file report.txt \
   --attach-file summary.pdf --attach-file export.csv
+```
+
+Repeat `--to`, `--cc`, and `--attach-file` to supply multiple values.
+`--attach-file` requests an upload grant, uploads each file, and includes the resulting file IDs in the message.
+A message can include up to 10 files.
+
+To send files with a generated subject and body, run:
+
+```sh
 wagon send-file --to user@example.com summary.pdf export.csv
-wagon test --to you@example.com                 # one-off test, sender from the cert
-wagon messages list                             # your own messages, newest first
+```
+
+For `send-file`, put flags before file arguments.
+The subject defaults to the file name for one file, or `N files` for multiple files.
+The body defaults to `Attached:` followed by the file names.
+
+To send a test message using the certificate's first sender address, run:
+
+```sh
+wagon test --to user@example.com
+```
+
+## Inspect messages
+
+To list your messages, starting with the newest, run:
+
+```sh
+wagon messages list
 wagon messages list --status bounced --since 2026-09-01
-wagon message 01jx...                           # details, attached files, deliveries, and opens
-wagon messages deliveries 01jx...               # every attempt on a message
-wagon messages opens 01jx...
+```
+
+Filter messages with `--status`, `--from`, `--to`, `--since`, and `--until`.
+Use `--limit` to set the page size.
+If more messages exist, wagon prints a command with `--before` to retrieve the next page.
+The `ATT` column shows the attachment count.
+
+To inspect a message, its delivery attempts, or its opens, run:
+
+```sh
+wagon message MESSAGE_ID
+wagon messages deliveries MESSAGE_ID
+wagon messages opens MESSAGE_ID
+```
+
+Replace *`MESSAGE_ID`* with an ID from `wagon messages list`.
+`wagon message` includes file names, types, sizes, and depot scan results for inbound attachments.
+The rail server records attachments for API messages, inbound messages, and form submissions.
+It does not record attachments for SMTP submissions.
+
+## Manage forms
+
+To list forms or create a contact form, run:
+
+```sh
 wagon forms list
-wagon forms create --name contact --from noreply@ataca.io \
-  --to you@example.com --subject "Contact form" --redirect https://example.com/thanks
-wagon --json whoami                             # identity JSON with an added domains array
-wagon completion zsh                            # shell completion script, see below
+wagon forms create --name contact --to user@example.com \
+  --subject "Contact form" --redirect https://example.com/thanks
 ```
 
-- `messages list` takes `--status`, `--from`, `--to`, `--since`, `--until`, and `--limit`. While more rows exist, it prints the `--before <next id>` command for the next page.
-- `messages list` shows each message's attachment count in the `ATT` column. `message <id>` lists the files by name, type, and size, with depot's scan verdict for an inbound part. rail records the files of API sends, inbound mail, and form submissions, not SMTP submissions.
-- `--from` is optional on `send`, `send-file`, and `forms create`. It defaults to the certificate's first sender.
-- A sender the certificate does not allow fails with the list of allowed senders.
-- `--to`, `--cc`, and `--attach-file` repeat.
-- `--attach-file` mints one upload grant, uploads each file, and sends the resulting ids as attachments. A send takes up to 10 files.
-- `send-file` sends its file arguments the same way. Flags go before the files. The subject defaults to the file name, or `N files`. The body defaults to `Attached:` and the file names.
-- `wagon test` uses the certificate's first email SAN as the sender.
-- `whoami` lists all owned domains, following pagination. JSON output preserves identity fields and adds the complete domain records.
-
-## Email checks and verification
-
-```bash
-wagon emails check person@example.com
-wagon email-verifications create --email person@example.com \
-  --purpose signup --subject-id account-123 --request-id signup-123
-wagon email-verifications get ID
-wagon email-verifications confirm ID --code 012345
-wagon --json emails check person@example.com
-```
+## Check email addresses and verify ownership
 
 These commands require rail's `email_checks` feature.
-`emails check` reports routing, domain category, SMTP results, and delivery evidence.
-An HTTP 200 assessment exits successfully, including `invalid`, `undeliverable`, and `unknown` results.
-An SMTP acceptance does not prove mailbox ownership.
+To check an address, run:
 
-`email-verifications create` sends a six-digit ownership code.
-`--from` defaults to the certificate's first sender. `--request-id` defaults to a generated value.
-Reuse an accepted request ID to retry without sending another message.
-Use a new request ID with the same email, sender, purpose, and subject to resend.
-Resending preserves the challenge expiry and failed-attempt budget. Check `resend_at` before resending.
-Codes expire after ten minutes and allow five failed attempts.
-`get` reports `pending`, `verified`, `expired`, or `locked` status.
-`confirm` consumes the code. Keep leading zeros when entering it.
-Verification applies to the authenticated client, email, purpose, and application subject.
-All commands support global `--json`, which preserves the complete server response.
+```sh
+wagon emails check user@example.com
+```
 
-## Domains
+The response reports routing, domain category, SMTP results, and delivery evidence.
+An HTTP `200` response produces exit code `0`, including assessments with `invalid`, `undeliverable`, or `unknown` status.
+SMTP acceptance does not prove mailbox ownership.
 
-Manage domains owned by your certificate's client identity:
+To verify mailbox ownership:
 
-```bash
-wagon domains list --limit 20
-wagon domains list --limit 20 --after CURSOR
-wagon domains create example.com
-wagon domains create example.net --dns-mode delegated
+1. Send an ownership verification code:
+
+   ```sh
+   wagon email-verifications create --email user@example.com \
+     --purpose signup --subject-id account-123 --request-id signup-123
+   ```
+
+   Replace `signup`, `account-123`, and `signup-123` with your application's purpose, subject ID, and request ID.
+   `--from` defaults to the certificate's first sender address.
+   If you omit `--request-id`, wagon generates a request ID.
+
+2. Check the verification status:
+
+   ```sh
+   wagon email-verifications get VERIFICATION_ID
+   ```
+
+   Replace *`VERIFICATION_ID`* with the `id` returned by `create`.
+   The status is `pending`, `verified`, `expired`, or `locked`.
+
+3. Confirm the code received by email:
+
+   ```sh
+   wagon email-verifications confirm VERIFICATION_ID --code VERIFICATION_CODE
+   ```
+
+   Replace *`VERIFICATION_CODE`* with the six-digit code, including any leading zeros.
+   Confirmation consumes the code.
+   Codes expire after 10 minutes and allow five failed attempts.
+
+Verification applies to the authenticated client, email address, purpose, and application subject.
+To retry without sending another message, reuse the accepted request ID.
+To resend, use a new request ID with the same email address, sender, purpose, and subject ID.
+Check `resend_at` before resending.
+Resending preserves the expiration time and failed-attempt limit.
+
+## Manage domains
+
+Domain commands manage domains owned by your certificate's client identity.
+Put positional arguments before command flags.
+
+### Create and verify a domain
+
+1. Create a domain:
+
+   ```sh
+   wagon domains create example.com
+   ```
+
+   Replace `example.com` with your domain.
+   Creation defaults to `records` mode and displays the ownership TXT record.
+   For delegated DNS mode, use `wagon domains create example.com --dns-mode delegated`.
+   Delegated mode displays the assigned nameservers and requires server support.
+
+2. Publish the returned DNS records with your DNS provider.
+3. Verify domain ownership:
+
+   ```sh
+   wagon domains verify example.com
+   ```
+
+To inspect a domain or list owned domains, run:
+
+```sh
 wagon domains get example.com
+wagon domains list --limit 20
+```
+
+`whoami`, `domains list`, and `domains get` show each domain's usage: Sending only or Sending and receiving.
+Usage comes from `receiving_enabled`.
+Ownership status and certificate sender permissions remain separate.
+Domains that only send email can keep their externally hosted mailboxes and existing MX records.
+
+### Check DNS records
+
+The rail server must support `POST /api/v1/domains/{domain}/check`.
+If the endpoint is unavailable, upgrade rail before using this command.
+To display DNS guidance and validate published records, run:
+
+```sh
 wagon domains records example.com
-wagon domains verify example.com
+```
+
+The response includes each record's purpose and requirement.
+For domains that only send email, rail omits MX guidance and skips the MX check.
+Merge SPF guidance into your existing SPF record to retain other sending providers.
+Keep a valid existing DMARC policy and report destination; the suggested value is an example.
+
+The rail server evaluates SPF against its configured mail host IP addresses, falling back to mail host DNS.
+It compares published DKIM keys with its stored public keys.
+Delegated ownership checks use parent nameserver referrals.
+
+Results show `pass`, `warn`, `fail`, `skip`, or `error`, with observed values and diagnostic details.
+Warnings and skipped checks do not fail the command.
+DNS errors produce an incomplete result.
+Results reflect rail's resolver cache and might lag recent DNS changes.
+This command does not change ownership status.
+To change ownership status, run `wagon domains verify example.com`.
+
+With `--json`, the response preserves the records response and adds a `validation` object.
+The object contains domain metadata, `checked_at`, and `results` from the server.
+For scripts that used the earlier local checks, `validation` is now an object instead of an array.
+Failed checks include the report and `validation_error`.
+If the check request fails, `validation` is `null` and DNS guidance remains available.
+
+### Update or delete a domain
+
+To configure receiving and delivery destinations, run:
+
+```sh
 wagon domains update example.com --webhook https://example.com/hooks/mail \
   --mailbox help@example.com --receiving-enabled=true
+```
+
+Receiving requires verified ownership and a webhook or enabled forwarding rule.
+`update` changes only supplied fields.
+Repeat `--webhook` or `--mailbox` to replace the corresponding list.
+To send empty lists, use `--clear-webhooks` or `--clear-mailboxes`.
+Write boolean values as `--receiving-enabled=false` or `--receiving-enabled=true`.
+
+To disable receiving or clear delivery settings, run:
+
+```sh
 wagon domains update example.com --receiving-enabled=false
 wagon domains update example.com --clear-webhooks --clear-mailboxes
+```
+
+Changing `--dns-mode` rotates the ownership proof and pauses the domain until verification succeeds.
+Deleting a domain also removes its forwarding rules.
+The rail server rejects deletion while certificate references remain.
+To delete a domain, run:
+
+```sh
 wagon domains delete example.com
 ```
 
-Put the domain before flags. Creation defaults to `records` mode and displays the ownership TXT record.
-Delegated mode displays the assigned nameservers and requires server support.
-Configure the returned DNS records before running `verify`.
-Changing `--dns-mode` rotates the ownership proof and pauses the domain until verification succeeds.
+### Manage forwarding rules
 
-`whoami`, `domains list`, and `domains get` show each domain's usage: **Sending only** or **Sending and receiving**.
-Usage comes from `receiving_enabled`. Ownership status remains separate, and certificate sender permissions still apply.
-Sending-only domains can keep externally hosted mailboxes and their existing MX records.
+Put the domain, local part, and destination before command flags.
+To list, create, update, or delete forwarding rules, run:
 
-`records` prints DNS guidance with each record's purpose and requirement, then requests validation from rail.
-Rail omits MX guidance for sending-only domains and skips their MX check.
-Merge SPF guidance into your existing SPF record to retain other sending providers.
-Keep a valid existing DMARC policy and report destination; the suggested value is an example.
-Rail evaluates SPF for its configured mail-host IPs, falling back to mail-host DNS.
-It compares published DKIM keys with its stored public keys.
-Delegated ownership checks use parent nameserver referrals.
-Results show `pass`, `warn`, `fail`, `skip`, or `error`, with observed values and diagnostic details.
-Warnings and skipped checks do not fail the command. DNS errors produce an incomplete result.
-Results reflect rail's resolver cache and may lag recent DNS changes.
-The command does not change ownership status; use `verify` for that.
-
-This requires rail's `POST /api/v1/domains/{domain}/check` endpoint. Deploy the rail update before upgrading wagon.
-JSON output preserves the records response and adds `validation`, containing the complete server check response.
-The previous local check's `validation` array is now an object with domain metadata, `checked_at`, and `results`.
-Failed checks still print the report and include `validation_error`.
-If the check request fails, `validation` is `null` and DNS guidance remains available.
-
-`update` changes only supplied fields. Repeat `--webhook` and `--mailbox` to replace each existing list.
-Use `--clear-webhooks` and `--clear-mailboxes` to send empty lists.
-Write boolean values as `--receiving-enabled=false` or `--receiving-enabled=true`.
-Receiving requires verified ownership and a webhook or enabled forwarding rule.
-
-Manage forwarding rules under a domain:
-
-```bash
+```sh
 wagon domains forwards list example.com --limit 20
-wagon domains forwards list example.com --limit 20 --after CURSOR
-wagon domains forwards create example.com help yavosh@gmail.com --from-munging auto
-wagon domains forwards update example.com help yavosh@gmail.com --enabled=false
-wagon domains forwards update example.com help yavosh@gmail.com --enabled=true
-wagon domains forwards update example.com help yavosh@gmail.com --from-munging=""
-wagon domains forwards delete example.com help yavosh@gmail.com
+wagon domains forwards create example.com help user@example.net \
+  --from-munging auto
+wagon domains forwards update example.com help user@example.net --enabled=false
+wagon domains forwards update example.com help user@example.net --enabled=true
+wagon domains forwards update example.com help user@example.net --from-munging=""
+wagon domains forwards delete example.com help user@example.net
 ```
 
-Put the domain, local part, and destination before flags.
+Replace `user@example.net` with the forwarding destination.
 `--from-munging` accepts `never`, `always`, `auto`, `arc`, or an empty value for the server default.
-Re-enabling a rule can clear a hard-bounce suppression. The response reports any remaining suppression.
+Enabling a rule can clear a suppression caused by a hard bounce.
+The response reports any remaining suppression.
 
-Both list commands accept `--limit` from 1 to 100, with a server default of 100.
-Pass the returned `next_cursor` as `--after` for the next page.
-All domain commands support global `--json`. Successful deletes return no body, so JSON mode prints nothing.
-Deleting a domain also removes its forwarding rules. Rail rejects deletion while certificate references remain.
+### Retrieve additional pages
 
-## Shell completion
+`domains list` and `domains forwards list` accept `--limit` values from 1 to 100.
+The server default is 100.
+To retrieve the next page, pass the returned `next_cursor` as `--after`:
 
-`wagon completion <bash|zsh|fish>` prints a completion script. Install it once for your shell:
+```sh
+wagon domains list --limit 20 --after CURSOR
+wagon domains forwards list example.com --limit 20 --after CURSOR
+```
+
+Replace *`CURSOR`* with the `next_cursor` from the corresponding list response.
+
+## Configure shell completion
+
+`wagon` provides completion scripts for Bash, Zsh, and fish.
+Completion supports commands, subcommands, and flags, including these values:
+
+- Message statuses for `--status`.
+- DNS modes for `--dns-mode` and rewrite modes for `--from-munging`.
+- Sender addresses from your certificate for `--from`.
+- Identity names for `auth use` and `--identity`.
+- File paths for `--cert`, `--key`, `--ca`, `--body-file`, and `--attach-file`.
+- File arguments for `send-file`, `auth setup`, and `auth add`.
+
+Completion works offline and does not retrieve message IDs or form tokens from rail.
+For flag value completion, use `--flag value` instead of `--flag=value`.
+
+### Bash
+
+Install the `bash-completion` package before installing the completion script.
+To install the script, run:
 
 ```bash
-# bash (needs the bash-completion package)
+mkdir -p ~/.local/share/bash-completion/completions
 wagon completion bash > ~/.local/share/bash-completion/completions/wagon
+```
 
-# zsh: write to any directory on $fpath, then start a new shell
-wagon completion zsh > "${fpath[1]}/_wagon"
+To load completion in the current shell, run:
 
-# fish
+```bash
+eval "$(wagon completion bash)"
+```
+
+### Zsh
+
+After initializing completion with `compinit`, choose one of these methods:
+
+- Install the script into a writable directory on `$fpath`, then start a new shell:
+
+  ```zsh
+  wagon completion zsh > "${fpath[1]}/_wagon"
+  ```
+
+- Load completion at shell startup by adding this line to `~/.zshrc` after `compinit`:
+
+  ```zsh
+  command -v wagon >/dev/null && eval "$(wagon completion zsh)"
+  ```
+
+  With Oh My Zsh, put the line after `source $ZSH/oh-my-zsh.sh`.
+
+To load completion in the current shell, run:
+
+```zsh
+source <(wagon completion zsh)
+```
+
+### fish
+
+To install the completion script, run:
+
+```fish
+mkdir -p ~/.config/fish/completions
 wagon completion fish > ~/.config/fish/completions/wagon.fish
 ```
 
-Or load it from `~/.zshrc` at each shell start, as with `direnv` or `starship`. The line must come after `compinit`; with oh-my-zsh, after `source $ZSH/oh-my-zsh.sh`:
+To load completion in the current shell, run:
 
-```zsh
-command -v wagon >/dev/null && eval "$(wagon completion zsh)"
+```fish
+wagon completion fish | source
 ```
-
-To try it in the current shell only:
-
-```bash
-source <(wagon completion zsh)      # zsh, after compinit
-eval "$(wagon completion bash)"     # bash; bash 3.2 cannot source <(...)
-wagon completion fish | source      # fish
-```
-
-Tab completes:
-
-- Verbs, subcommands, and flags.
-- `--status` values.
-- `--dns-mode` and `--from-munging` values.
-- `--from` values, from the email addresses in your certificate.
-- Identity names, for `auth use` and `--identity`.
-- File paths, for `--cert`, `--key`, `--ca`, `--body-file`, `--attach-file`, and the `send-file`, `auth setup`, and `auth add` arguments.
-
-Completion works offline. It never calls rail, so it does not complete message ids or form tokens.
-It completes a flag value only in the `--flag value` form, not `--flag=value`.
 
 ## Configuration
 
-For `--server` and `--ca`, a flag overrides the environment, which overrides the default. The certificate pair comes from the first of these that is set:
+Global flags go before the command.
+For `--server` and `--ca`, a flag overrides the environment variable, which overrides the default.
+`wagon` resolves the certificate and private key from these sources, in order:
 
-1. `--cert` and `--key`
-2. `RAIL_CERT` and `RAIL_KEY`
-3. `--identity`
-4. `WAGON_IDENTITY`
-5. `~/.wagon/config.json`
-6. `default`
+1. `--cert` and `--key`.
+2. `RAIL_CERT` and `RAIL_KEY`.
+3. `--identity`.
+4. `WAGON_IDENTITY`.
+5. The active identity in `~/.wagon/config.json`.
+6. The `default` identity.
 
-| Flag | Environment | Default |
+| Flag | Environment variable | Default |
 |---|---|---|
 | `--server` | `RAIL_SERVER` | `https://smtp.ataca.io` |
-| `--identity` | `WAGON_IDENTITY` | `~/.wagon/config.json`, else `default` |
-| `--cert` | `RAIL_CERT` | the active identity's `client.crt` |
-| `--key` | `RAIL_KEY` | the active identity's `client.key` |
-| `--ca` | `RAIL_CA` | system roots |
+| `--identity` | `WAGON_IDENTITY` | Active identity in `~/.wagon/config.json`, or `default` |
+| `--cert` | `RAIL_CERT` | Active identity's `client.crt` |
+| `--key` | `RAIL_KEY` | Active identity's `client.key` |
+| `--ca` | `RAIL_CA` | System certificate pool |
+
+### Print JSON output
+
+To print JSON, put the global `--json` flag before the command:
+
+```sh
+wagon --json whoami
+wagon --json emails check user@example.com
+```
+
+`whoami` preserves identity fields and adds a `domains` array containing all owned domain records.
+Email checks and ownership verification preserve the complete server response.
+Domain commands also support `--json`.
+Successful domain and forwarding rule deletions return no body, so JSON mode prints nothing.
 
 ## Exit codes
 
+Use these exit codes to handle command results in scripts:
+
 | Code | Meaning |
 |---|---|
-| 0 | Success |
-| 1 | Usage error |
-| 2 | Auth failure: TLS handshake, `401`, or `403` |
-| 3 | Any other `4xx` |
-| 4 | A `5xx`, transport error, or incomplete DNS validation |
-| 5 | DNS validation reported a configuration failure |
+| `0` | Success |
+| `1` | Usage error |
+| `2` | Authentication failure: TLS handshake, HTTP `401`, or HTTP `403` |
+| `3` | Any other HTTP `4xx` response |
+| `4` | HTTP `5xx`, transport error, or incomplete DNS validation |
+| `5` | DNS validation reported a configuration failure |
 
-## Development
+## Develop wagon
 
-```bash
-make build     # CGO_ENABLED=0 build; `wagon version` prints the `git describe` stamp
-make install   # install into GOBIN
-make test      # go test -race ./...
-make lint      # golangci-lint
-```
+With Go 1.27 or later installed, use these development commands:
 
-A `v*` tag runs `release.yml`, which requires green CI on the tagged commit.
-It publishes four ZIP archives, `install.sh`, and `SHA256SUMS`.
+| Command | Action |
+|---|---|
+| `make build` | Build with `CGO_ENABLED=0` and version information from `git describe`. |
+| `make install` | Install into `GOBIN`, or `$(go env GOPATH)/bin` if `GOBIN` is unset. |
+| `make test` | Run `go test -race ./...`. |
+| `make lint` | Run `golangci-lint`. |
+
+To inspect the build version, run `wagon version`.
+A `v*` tag starts `release.yml`, which requires green CI on the tagged commit.
+The workflow publishes four ZIP archives, `install.sh`, and `SHA256SUMS`.
