@@ -4,11 +4,28 @@
 
 ## Install
 
+On Linux (amd64 or arm64) or macOS (Apple silicon), install the latest release:
+
+```sh
+curl -fsSL https://github.com/ataca-io/wagon/releases/latest/download/install.sh | sh
+```
+
+The installer verifies the ZIP's SHA-256 checksum and installs `wagon` into `~/.local/bin` without sudo.
+It requires `curl`, `unzip`, and either `sha256sum` or `shasum`.
+If needed, it prints a command to add that directory to `PATH`.
+Run the same command to upgrade to the latest release.
+
+On Windows x64, [download the latest ZIP](https://github.com/ataca-io/wagon/releases/latest/download/wagon-windows-amd64.zip).
+Extract `wagon.exe` into a directory on your `PATH`.
+
+With Go installed, you can also build from source:
+
 ```bash
 go install github.com/ataca-io/wagon@latest
 ```
 
-Or download a `wagon-<os>-<arch>.zip` from [Releases](https://github.com/ataca-io/wagon/releases). Builds exist for Linux and macOS, on amd64 and arm64.
+All ZIP archives are available on [Releases](https://github.com/ataca-io/wagon/releases).
+Builds cover Linux amd64 and arm64, macOS arm64, and Windows amd64.
 
 ## Set up
 
@@ -246,4 +263,5 @@ make test      # go test -race ./...
 make lint      # golangci-lint
 ```
 
-A `v*` tag runs `release.yml`, which requires green CI on the tagged commit and publishes the four zips.
+A `v*` tag runs `release.yml`, which requires green CI on the tagged commit.
+It publishes four ZIP archives, `install.sh`, and `SHA256SUMS`.
