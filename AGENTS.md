@@ -15,3 +15,4 @@ go run . --server https://smtp.ataca.io --cert c.crt --key c.key whoami
 
 - Domain usage derives from `receiving_enabled`; ownership status and sender permissions remain separate.
 - `domains records` displays guidance and calls rail's read-only `/api/v1/domains/{domain}/check`. Keep DNS policy validation on rail.
+- `emails check` and `email-verifications create|get|confirm` wrap rail's email assessment and ownership APIs. Keep assessment policy on rail.

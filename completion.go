@@ -48,6 +48,16 @@ var completionTree = completionSpec{
 	flags: map[string]bool{"server": true, "identity": true, "cert": true, "key": true, "ca": true, "json": false},
 	subs: map[string]completionSpec{
 		"whoami": {},
+		"emails": {subs: map[string]completionSpec{
+			"check": {},
+		}},
+		"email-verifications": {subs: map[string]completionSpec{
+			"create": {flags: map[string]bool{
+				"email": true, "from": true, "purpose": true, "subject-id": true, "request-id": true,
+			}},
+			"get":     {},
+			"confirm": {flags: map[string]bool{"code": true}},
+		}},
 		"send": {flags: map[string]bool{
 			"from": true, "to": true, "cc": true, "subject": true, "text": true, "html": true,
 			"body-file": true, "reply-to": true, "unsubscribe-url": true, "request-id": true, "attach-file": true,
