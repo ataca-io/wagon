@@ -34,6 +34,7 @@ type client struct {
 	// senders are the certificate's email SANs, the From addresses rail
 	// accepts for this client.
 	senders []string
+	leaf    *x509.Certificate
 }
 
 // newClient loads the client certificate and optional CA, and builds the
@@ -70,6 +71,7 @@ func newClient(server, certFile, keyFile, caFile string, jsonOut bool) (*client,
 		jsonOut: jsonOut,
 		caPool:  caPool,
 		senders: cert.Leaf.EmailAddresses,
+		leaf:    cert.Leaf,
 	}, nil
 }
 
@@ -181,9 +183,13 @@ func exitCode(err error) int {
 	return 4
 }
 
+func stopRedirect(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
 // do sends a JSON request and, on success, decodes the JSON response body
 // into out (when non-nil) and also returns the raw body, for --json to print
-// verbatim. A status >= 400 is reported as *apiError, never decoded into out.
+// verbatim. A non-2xx status is reported as *apiError.
 func (c *client) do(method, path string, body, out any) ([]byte, error) {
 	var reader io.Reader
 	if body != nil {
@@ -214,7 +220,7 @@ func (c *client) do(method, path string, body, out any) ([]byte, error) {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		apiErr := newAPIError(resp.StatusCode, data)
 		// rail's message names no address, so list the ones this certificate allows.
 		if apiErr.code == "sender_not_authorized" && len(c.senders) > 0 {

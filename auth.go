@@ -78,7 +78,7 @@ func runAuth(args []string, identity string, stdout io.Writer) error {
 	case args[0] == "list" && len(args) == 1:
 		return listIdentities(identity, stdout)
 	default:
-		return &usageError{"usage: wagon auth <show|setup|add|use|list> [args]"}
+		return &usageError{"usage: wagon auth <show|setup|add|use|list|renew> [args]"}
 	}
 }
 

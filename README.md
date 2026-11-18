@@ -2,7 +2,7 @@
 
 `wagon` is the command-line interface (CLI) for [rail](https://smtp.ataca.io/agents), a transactional email server.
 It uses your client certificate to authenticate requests with mutual TLS (mTLS).
-It calls rail's `/who` and `/api/v1/*` endpoints.
+It also uploads attachments and manages files in depot.
 
 ## Install wagon
 
@@ -111,6 +111,19 @@ Identity names must contain 1 to 64 characters.
 Start with a lowercase letter or digit.
 For subsequent characters, use lowercase letters, digits, `.`, `_`, or `-`.
 
+### Renew a rail certificate
+
+Run `wagon auth renew` to stage a renewed certificate and key for the active identity.
+
+```sh
+wagon auth renew --output-dir renewed
+```
+
+Use a directory name that does not exist. A valid certificate renews over mTLS with a new key.
+Within rail's expiry grace period, wagon uses the existing key to recover an expired certificate.
+The command leaves your current credential files in place.
+After renewal, install `renewed/client.crt` and `renewed/client.key` with `auth setup` or `auth add`.
+
 ## Send email
 
 To send a text message, run:
@@ -134,8 +147,14 @@ wagon send --to user@example.com \
 ```
 
 Repeat `--to`, `--cc`, and `--attach-file` to supply multiple values.
-`--attach-file` requests an upload grant, uploads each file, and includes the resulting file IDs in the message.
-A message can include up to 10 files.
+`--attach-file` uses rail upload grants in batches of up to 10 files.
+With an explicit `--request-id`, wagon saves completed uploads in the local user cache.
+To retry a send, reuse that ID and the same attachment files.
+
+Use `--attachment-id FILE_ID` for an existing file uploaded with a rail-issued grant.
+Use `--inline-file FILE` to send a local file through rail if inline attachments are enabled.
+Repeat either flag to add multiple files.
+A message can include up to 20 attachments across all three flags.
 
 To send files with a generated subject and body, run:
 
@@ -146,12 +165,42 @@ wagon send-file --to user@example.com summary.pdf export.csv
 For `send-file`, put flags before file arguments.
 The subject defaults to the file name for one file, or `N files` for multiple files.
 The body defaults to `Attached:` followed by the file names.
+Add `--inline` to upload the files through rail.
 
 To send a test message using the certificate's first sender address, run:
 
 ```sh
 wagon test --to user@example.com
 ```
+
+## Manage depot files
+
+Set `--server` to the depot HTTPS URL on every command.
+Use a client certificate that depot accepts.
+Pass `--cert` and `--key`, or select a depot identity with `--identity`.
+
+```sh
+wagon --server DEPOT_URL depot upload --ttl 24h --exportable report.pdf
+wagon --server DEPOT_URL depot upload --resumable report.pdf
+wagon --server DEPOT_URL depot upload --resume FILE_ID report.pdf
+```
+
+A resumable upload prints the file ID to stderr.
+To resume, use the printed ID and the same local file.
+For uploads started by wagon, it verifies the file contents before resuming.
+Depot fixes the retention, content type, and exportability when it creates the upload.
+
+| Command after `wagon --server DEPOT_URL depot` | Action |
+| --- | --- |
+| `list [--before ID]` | List files. Use `next_before` to retrieve the next page. |
+| `get FILE_ID` | Show file metadata, scan verdict, and any download link. |
+| `progress FILE_ID` | Show the number of bytes depot has received. |
+| `download FILE_ID` | Stream the file to stdout. |
+| `claim FILE_ID [--ttl DURATION]` | Extend the file's retention. |
+| `delete FILE_ID` | Delete the file. |
+| `grant --ttl 10m --max-files 1 --max-bytes 1048576 --origin https://example.com` | Create a browser upload grant, if enabled on depot. |
+
+A depot certificate scopes uploads and grants to that identity. Use a rail-issued grant for rail attachments.
 
 ## Inspect messages
 
@@ -391,8 +440,8 @@ Completion supports commands, subcommands, and flags, including these values:
 - DNS modes for `--dns-mode` and rewrite modes for `--from-munging`.
 - Sender addresses from your certificate for `--from`.
 - Identity names for `auth use` and `--identity`.
-- File paths for `--cert`, `--key`, `--ca`, `--body-file`, and `--attach-file`.
-- File arguments for `send-file`, `auth setup`, and `auth add`.
+- Paths for `--cert`, `--key`, `--ca`, `--body-file`, `--attach-file`, `--inline-file`, and `--output-dir`.
+- File arguments for `send-file`, `depot upload`, `auth setup`, and `auth add`.
 
 Completion works offline and does not retrieve message IDs or form tokens from rail.
 For flag value completion, use `--flag value` instead of `--flag=value`.

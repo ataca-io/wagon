@@ -34,7 +34,7 @@ func TestComplete(t *testing.T) {
 		words []string
 		want  []string
 	}{
-		{"no words", nil, []string{"auth", "completion", "domains", "email-verifications", "emails", "forms", "message", "messages", "send", "send-file", "test", "version", "whoami"}},
+		{"no words", nil, []string{"auth", "completion", "depot", "domains", "email-verifications", "emails", "forms", "message", "messages", "send", "send-file", "test", "version", "whoami"}},
 		{"email subcommands", []string{"emails", ""}, []string{"check"}},
 		{"verification subcommands", []string{"email-verifications", ""}, []string{"confirm", "create", "get"}},
 		{"verification create flags", []string{"email-verifications", "create", "--"}, []string{"--email", "--from", "--purpose", "--request-id", "--subject-id"}},
@@ -48,7 +48,10 @@ func TestComplete(t *testing.T) {
 		{"partial verb", []string{"s"}, []string{"send", "send-file"}},
 		{"messages subcommands", []string{"messages", ""}, []string{"deliveries", "list", "opens"}},
 		{"forms subcommands after --json", []string{"--json", "forms", ""}, []string{"create", "delete", "get", "list", "submissions", "update"}},
-		{"auth subcommands", []string{"auth", ""}, []string{"add", "list", "setup", "show", "use"}},
+		{"auth subcommands", []string{"auth", ""}, []string{"add", "list", "renew", "setup", "show", "use"}},
+		{"depot subcommands", []string{"depot", ""}, []string{"claim", "delete", "download", "get", "grant", "list", "progress", "upload"}},
+		{"renew output directory", []string{"auth", "renew", "--output-dir", ""}, []string{completeFile}},
+		{"depot upload argument", []string{"depot", "upload", "--resume", "file-id", ""}, []string{completeFile}},
 		{"completion shells", []string{"completion", ""}, []string{"bash", "fish", "zsh"}},
 		{"global flags", []string{"--"}, []string{"--ca", "--cert", "--identity", "--json", "--key", "--server"}},
 		{"global flag values are skipped", []string{"--server", "https://x:443", "--ca", "ca.crt", "te"}, []string{"test"}},
@@ -207,6 +210,14 @@ func TestCompletionFlagsMatch(t *testing.T) {
 			return runDomains(nil, []string{"forwards", sub, "-h"}, io.Discard, w)
 		}
 	}
+	verbs["auth renew"] = func(w io.Writer) error {
+		return runAuthRenew("", "", "", "", "", false, []string{"-h"}, io.Discard, w)
+	}
+	for _, sub := range []string{"upload", "list", "get", "progress", "download", "delete", "claim", "grant"} {
+		verbs["depot "+sub] = func(w io.Writer) error {
+			return runDepot(nil, []string{sub, "-h"}, io.Discard, w)
+		}
+	}
 	for path, fn := range verbs {
 		t.Run(path, func(t *testing.T) {
 			var help bytes.Buffer
@@ -249,6 +260,7 @@ func TestCompletionCommandsMatch(t *testing.T) {
 		"messages":            runMessages(nil, nil, io.Discard, io.Discard),
 		"forms":               runForms(nil, nil, io.Discard, io.Discard),
 		"auth":                runAuth([]string{"bogus"}, "", io.Discard),
+		"depot":               runDepot(nil, nil, io.Discard, io.Discard),
 		"domains":             runDomains(nil, nil, io.Discard, io.Discard),
 		"domains forwards":    runDomainForwards(nil, nil, io.Discard, io.Discard),
 	}

@@ -61,9 +61,10 @@ var completionTree = completionSpec{
 		"send": {flags: map[string]bool{
 			"from": true, "to": true, "cc": true, "subject": true, "text": true, "html": true,
 			"body-file": true, "reply-to": true, "unsubscribe-url": true, "request-id": true, "attach-file": true,
+			"attachment-id": true, "inline-file": true,
 		}},
 		"send-file": {files: true, flags: map[string]bool{
-			"from": true, "to": true, "cc": true, "subject": true, "text": true, "request-id": true,
+			"from": true, "to": true, "cc": true, "subject": true, "text": true, "request-id": true, "inline": false,
 		}},
 		"message": {},
 		"messages": {subs: map[string]completionSpec{
@@ -99,6 +100,17 @@ var completionTree = completionSpec{
 				"delete": {},
 			}},
 		}},
+		"depot": {subs: map[string]completionSpec{
+			"upload": {files: true, flags: map[string]bool{
+				"ttl": true, "exportable": false, "content-type": true, "resumable": false, "resume": true,
+			}},
+			"list": {flags: map[string]bool{"before": true}},
+			"get":  {}, "progress": {}, "download": {}, "delete": {},
+			"claim": {flags: map[string]bool{"ttl": true}},
+			"grant": {flags: map[string]bool{
+				"ttl": true, "file-ttl": true, "max-files": true, "max-bytes": true, "origin": true, "content-type": true,
+			}},
+		}},
 		"test": {flags: map[string]bool{"to": true}},
 		"auth": {subs: map[string]completionSpec{
 			"setup": {files: true},
@@ -106,6 +118,7 @@ var completionTree = completionSpec{
 			"use":   {identities: true},
 			"list":  {},
 			"show":  {},
+			"renew": {flags: map[string]bool{"output-dir": true}},
 		}},
 		"version":    {},
 		"completion": {subs: map[string]completionSpec{"bash": {}, "zsh": {}, "fish": {}}},
@@ -119,7 +132,7 @@ func withFlags(base, extra map[string]bool) map[string]bool {
 }
 
 // fileFlags take a file path as their value.
-var fileFlags = map[string]bool{"cert": true, "key": true, "ca": true, "body-file": true, "attach-file": true}
+var fileFlags = map[string]bool{"cert": true, "key": true, "ca": true, "body-file": true, "attach-file": true, "inline-file": true, "output-dir": true}
 
 // statusValues are messages list --status's accepted values.
 var statusValues = []string{"pending", "partial", "delivered", "bounced", "unroutable"}

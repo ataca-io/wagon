@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -12,116 +15,201 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"time"
 )
 
-// attachUploadTimeout bounds one file upload to depot; a send can carry whole
-// files, so this is far longer than the mTLS client's own timeout.
-const attachUploadTimeout = 5 * time.Minute
+const (
+	attachUploadTimeout = 5 * time.Minute
+	attachFileTTL       = "1h"
+	maxFilesPerGrant    = 10
+	maxUploadResponse   = 64 << 10
+)
 
-// attachFileTTL bounds how long an uploaded file lives in depot: a short TTL
-// caps how long a file is stranded in rail's depot quota if the send that
-// follows then fails.
-const attachFileTTL = "1h"
+var attachmentIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-// attachGrantRequest is the body wagon sends to mint a grant. content_types
-// and origins are omitted: empty content_types means "any" at depot, and
-// rail defaults origins itself.
 type attachGrantRequest struct {
 	MaxBytes int64  `json:"max_bytes"`
 	MaxFiles int    `json:"max_files"`
 	FileTTL  string `json:"file_ttl"`
 }
 
-// resolveAttachFiles mints one depot upload grant covering every path in
-// paths, uploads each in flag order, and returns the resulting file ids in
-// that order. It mints nothing and returns (nil, nil) when paths is empty.
-func resolveAttachFiles(c *client, paths []string, out io.Writer) ([]string, error) {
-	if len(paths) == 0 {
-		return nil, nil
-	}
+type attachFile struct {
+	path       string
+	size       int64
+	digest     []byte
+	receipt    string
+	id         string
+	uploadedAt time.Time
+}
 
-	var maxSize int64
-	for _, p := range paths {
-		info, err := os.Stat(p)
+type inlineFile struct {
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+	Content     []byte `json:"content"`
+}
+
+func fileContentType(name string) string {
+	return cmp.Or(mime.TypeByExtension(filepath.Ext(name)), "application/octet-stream")
+}
+
+func attachmentSize(flag, path string) (int64, error) {
+	info, err := os.Stat(path)
+	switch {
+	case err != nil:
+		return 0, &usageError{fmt.Sprintf("--%s %s: %v", flag, path, err)}
+	case !info.Mode().IsRegular():
+		return 0, &usageError{fmt.Sprintf("--%s %s: not a regular file", flag, path)}
+	case info.Size() <= 0:
+		return 0, &usageError{fmt.Sprintf("--%s %s: file is empty", flag, path)}
+	}
+	return info.Size(), nil
+}
+
+func readInlineFiles(paths []string) ([]inlineFile, error) {
+	files := make([]inlineFile, 0, len(paths))
+	for _, path := range paths {
+		if _, err := attachmentSize("inline-file", path); err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil, &usageError{fmt.Sprintf("--attach-file %s: %v", p, err)}
+			return nil, &usageError{fmt.Sprintf("--inline-file %s: %v", path, err)}
 		}
-		if !info.Mode().IsRegular() {
-			return nil, &usageError{fmt.Sprintf("--attach-file %s: not a regular file", p)}
+		if len(data) == 0 {
+			return nil, &usageError{fmt.Sprintf("--inline-file %s: file is empty", path)}
 		}
-		maxSize = max(maxSize, info.Size())
+		name := filepath.Base(path)
+		files = append(files, inlineFile{Filename: name, ContentType: fileContentType(name), Content: data})
 	}
+	return files, nil
+}
 
-	// depot's grant-upload check is a strict ">" against max_bytes, so a file
-	// at exactly the cap already fits; depot separately refuses max_bytes<=0,
-	// which max(maxSize, 1) guards against for an all-empty (zero-byte) input.
-	var grant struct {
-		UploadURL string `json:"upload_url"`
-	}
-	if _, err := c.do(http.MethodPost, "/api/v1/upload-grants",
-		attachGrantRequest{MaxBytes: max(maxSize, 1), MaxFiles: len(paths), FileTTL: attachFileTTL}, &grant); err != nil {
-		return nil, err
-	}
-
-	// No client certificate: the grant token in the URL is depot's
-	// credential. --ca still applies, so a privately-issued depot server
-	// certificate verifies the same way it does for rail's own mTLS calls.
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = &tls.Config{RootCAs: c.caPool}
-	uploadClient := &http.Client{Timeout: attachUploadTimeout, Transport: transport}
-
-	// Sequential by choice: depot's per-upload use-counting is an atomic
-	// guarded UPDATE, so concurrency would be safe; serial keeps progress output ordered.
-	ids := make([]string, 0, len(paths))
-	for _, p := range paths {
-		id, err := uploadAttachFile(uploadClient, grant.UploadURL, p)
+func prepareAttachFiles(c *client, requestID string, paths []string) ([]attachFile, error) {
+	files := make([]attachFile, 0, len(paths))
+	for _, path := range paths {
+		size, err := attachmentSize("attach-file", path)
 		if err != nil {
 			return nil, err
 		}
-		if !c.jsonOut {
-			_, _ = fmt.Fprintf(out, "uploaded %s -> %s\n", p, id)
+		files = append(files, attachFile{path: path, size: size})
+	}
+	if requestID == "" || len(files) == 0 {
+		return files, nil
+	}
+	dir, err := attachCacheDir()
+	if err != nil {
+		return nil, err
+	}
+	for i := range files {
+		if err := files[i].initReceipt(c, dir, requestID, i); err != nil {
+			return nil, err
 		}
-		ids = append(ids, id)
+	}
+	return files, nil
+}
+
+func resolveAttachFiles(c *client, files []attachFile, out io.Writer) ([]string, error) {
+	var pending []*attachFile
+	for i := range files {
+		if files[i].id == "" {
+			pending = append(pending, &files[i])
+		}
+	}
+
+	if len(pending) != 0 {
+		// The upload URL authorizes the request. Only the HTTPS roots are shared
+		// with the rail client.
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		defer transport.CloseIdleConnections()
+		transport.TLSClientConfig = &tls.Config{RootCAs: c.caPool}
+		hc := &http.Client{
+			Timeout: attachUploadTimeout, Transport: transport,
+			CheckRedirect: stopRedirect,
+		}
+		for batch := range slices.Chunk(pending, maxFilesPerGrant) {
+			if err := uploadAttachBatch(c, hc, batch, out); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	ids := make([]string, 0, len(files))
+	for _, f := range files {
+		ids = append(ids, f.id)
 	}
 	return ids, nil
 }
 
-// maxUploadResponse bounds how much of depot's upload response wagon reads.
-const maxUploadResponse = 64 << 10
+func uploadAttachBatch(c *client, hc *http.Client, files []*attachFile, out io.Writer) error {
+	var maxSize int64
+	for _, f := range files {
+		maxSize = max(maxSize, f.size)
+	}
+	var grant struct {
+		UploadURL string `json:"upload_url"`
+	}
+	if _, err := c.do(http.MethodPost, "/api/v1/upload-grants",
+		attachGrantRequest{MaxBytes: maxSize, MaxFiles: len(files), FileTTL: attachFileTTL}, &grant); err != nil {
+		return err
+	}
 
-// uploadAttachFile streams path's bytes to a depot grant's upload_url. No
-// client certificate is sent: the grant token embedded in the URL is the
-// credential, and the request goes to depot, not to rail.
-func uploadAttachFile(hc *http.Client, uploadURL, path string) (string, error) {
-	f, err := os.Open(path)
+	for _, f := range files {
+		id, err := uploadAttachFile(hc, grant.UploadURL, f)
+		if err != nil {
+			return err
+		}
+		if !c.jsonOut {
+			_, _ = fmt.Fprintf(out, "uploaded %s -> %s\n", f.path, id)
+		}
+		if err := f.saveReceipt(id); err != nil {
+			return err
+		}
+		f.id = id
+	}
+	return nil
+}
+
+func uploadAttachFile(hc *http.Client, uploadURL string, file *attachFile) (string, error) {
+	f, err := os.Open(file.path)
 	if err != nil {
-		return "", &usageError{fmt.Sprintf("--attach-file %s: %v", path, err)}
+		return "", &usageError{fmt.Sprintf("--attach-file %s: %v", file.path, err)}
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		return "", &usageError{fmt.Sprintf("--attach-file %s: %v", path, err)}
+		return "", &usageError{fmt.Sprintf("--attach-file %s: %v", file.path, err)}
 	}
-	// Not classifyTransportErr: this leg sends no client certificate, so a
-	// TLS failure here is depot's server certificate, never rail's.
-	if info.Size() <= 0 {
-		return "", &netError{fmt.Errorf("depot: upload size must be > 0")}
+	if !info.Mode().IsRegular() || info.Size() != file.size {
+		return "", &usageError{fmt.Sprintf("--attach-file %s changed before upload", file.path)}
 	}
 
-	name := filepath.Base(path)
-	contentType := cmp.Or(mime.TypeByExtension(filepath.Ext(name)), "application/octet-stream")
-
-	q := url.Values{"filename": {name}}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, uploadURL+"?"+q.Encode(), f)
+	var body io.Reader = f
+	sum := sha256.New()
+	if file.digest != nil {
+		body = io.TeeReader(f, sum)
+	}
+	name := filepath.Base(file.path)
+	u, err := url.Parse(uploadURL)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return "", &netError{fmt.Errorf("depot: invalid HTTPS grant upload URL")}
+	}
+	q := u.Query()
+	q.Set("filename", name)
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), body)
 	if err != nil {
-		return "", &netError{fmt.Errorf("depot: build grant upload request: %w", err)}
+		return "", &netError{fmt.Errorf("depot: build grant upload request")}
 	}
-	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Content-Type", fileContentType(name))
 	req.ContentLength = info.Size()
 
 	resp, err := hc.Do(req)
 	if err != nil {
+		if ue, ok := errors.AsType[*url.Error](err); ok {
+			err = ue.Err
+		}
 		return "", &netError{fmt.Errorf("depot: grant upload: %w", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -129,16 +217,20 @@ func uploadAttachFile(hc *http.Client, uploadURL, path string) (string, error) {
 	if err != nil {
 		return "", &netError{fmt.Errorf("depot: read response body: %w", err)}
 	}
-	// depot answers errors in rail's {"error","message"} shape, so the same
-	// exit-code mapping applies to a depot-leg failure.
 	if resp.StatusCode != http.StatusCreated {
 		return "", newAPIError(resp.StatusCode, data)
+	}
+	if file.digest != nil && !bytes.Equal(sum.Sum(nil), file.digest) {
+		return "", &usageError{fmt.Sprintf("--attach-file %s changed during upload", file.path)}
 	}
 	var uploaded struct {
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(data, &uploaded); err != nil {
 		return "", &netError{fmt.Errorf("depot: decode response: %w", err)}
+	}
+	if uploaded.ID == "" {
+		return "", &netError{fmt.Errorf("depot: upload response has no file ID")}
 	}
 	return uploaded.ID, nil
 }
