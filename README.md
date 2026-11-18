@@ -113,7 +113,7 @@ For subsequent characters, use lowercase letters, digits, `.`, `_`, or `-`.
 
 ### Renew a rail certificate
 
-To stage a renewed certificate and key for the active identity, run:
+Run `wagon auth renew` to stage a renewed certificate and key for the active identity.
 
 ```sh
 wagon auth renew --output-dir renewed
