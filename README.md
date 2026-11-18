@@ -187,6 +187,7 @@ wagon --server DEPOT_URL depot upload --resume FILE_ID report.pdf
 
 A resumable upload prints the file ID to stderr.
 To resume, use the printed ID and the same local file.
+For uploads started by wagon, it verifies the file contents before resuming.
 Depot fixes the retention, content type, and exportability when it creates the upload.
 
 | Command after `wagon --server DEPOT_URL depot` | Action |

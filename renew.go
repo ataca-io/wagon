@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 )
 
@@ -114,8 +116,8 @@ func renewCertificate(c *client, outputDir string, out io.Writer) error {
 		return fmt.Errorf("validate renewed certificate (key staged in %q): %w", outputDir, err)
 	}
 	cert := renewed.Leaf
-	if cert.IsCA || cert.Subject.CommonName != leaf.Subject.CommonName || time.Now().After(cert.NotAfter) {
-		return fmt.Errorf("unexpected renewed certificate (key staged in %q)", outputDir)
+	if err := validateRenewedCertificate(leaf, cert, time.Now()); err != nil {
+		return fmt.Errorf("validate renewed certificate (key staged in %q): %w", outputDir, err)
 	}
 	if err := writeRenewalFile(dir, authCert, certPEM); err != nil {
 		return fmt.Errorf("stage renewed certificate (key staged in %q): %w", outputDir, err)
@@ -133,6 +135,36 @@ func renewCertificate(c *client, outputDir string, out io.Writer) error {
 		{"active_certs", fmt.Sprint(response.ActiveCerts)},
 	})
 	return nil
+}
+
+func validateRenewedCertificate(old, renewed *x509.Certificate, now time.Time) error {
+	switch {
+	case renewed.IsCA || renewed.Subject.CommonName != old.Subject.CommonName:
+		return errors.New("unexpected certificate identity")
+	case now.Before(renewed.NotBefore) || now.After(renewed.NotAfter):
+		return errors.New("certificate is outside its validity period")
+	case !slices.Contains(renewed.ExtKeyUsage, x509.ExtKeyUsageClientAuth):
+		return errors.New("certificate does not permit client authentication")
+	case !slices.Equal(old.EmailAddresses, renewed.EmailAddresses):
+		return errors.New("certificate email SANs changed")
+	case !renewedWebhookSANsMatch(old.URIs, renewed.URIs):
+		return errors.New("certificate webhook URI SANs changed")
+	}
+	return nil
+}
+
+func renewedWebhookSANsMatch(old, renewed []*url.URL) bool {
+	for _, u := range old {
+		// Rail copies the original HTTPS webhook URIs in order.
+		if u.Scheme != "https" {
+			continue
+		}
+		if len(renewed) == 0 || renewed[0].String() != u.String() {
+			return false
+		}
+		renewed = renewed[1:]
+	}
+	return len(renewed) == 0
 }
 
 func writeRenewalFile(dir *os.Root, name string, data []byte) error {

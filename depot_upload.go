@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -20,6 +21,7 @@ import (
 const depotTransferTimeout = 5 * time.Minute
 const depotTusVersion = "1.0.0"
 const depotTusChunkSize = 8 << 20
+const depotTusDigestKey = "wagon-sha256"
 
 func runDepotUpload(c *client, args []string, out, stderr io.Writer) error {
 	fs := flag.NewFlagSet("depot upload", flag.ContinueOnError)
@@ -120,6 +122,10 @@ func putDepotFile(c *client, file *os.File, size int64, name, mediaType string, 
 }
 
 func createDepotUpload(c *client, file *os.File, size int64, name, mediaType string, q url.Values, out, stderr io.Writer) error {
+	digest, err := depotUploadDigest(file, size)
+	if err != nil {
+		return err
+	}
 	path := depotFilesPath
 	if len(q) > 0 {
 		path += "?" + q.Encode()
@@ -131,7 +137,7 @@ func createDepotUpload(c *client, file *os.File, size int64, name, mediaType str
 	req.Header.Set("Tus-Resumable", depotTusVersion)
 	req.Header.Set("Upload-Length", strconv.FormatInt(size, 10))
 	req.Header.Set("Upload-Metadata", "filename "+base64.StdEncoding.EncodeToString([]byte(name))+
-		",filetype "+base64.StdEncoding.EncodeToString([]byte(mediaType)))
+		",filetype "+base64.StdEncoding.EncodeToString([]byte(mediaType))+","+depotTusDigestKey+" "+digest)
 	headers, _, err := doDepot(c, req, http.StatusCreated)
 
 	id, hasID := strings.CutPrefix(headers.Get("Location"), depotFilesPath+"/")
@@ -172,6 +178,9 @@ func resumeDepotUpload(c *client, file *os.File, size int64, id string, out, std
 	if !ok || offset > length {
 		return fmt.Errorf("depot: invalid resumable upload offset")
 	}
+	if err := verifyDepotUploadFile(file, size, headers.Get("Upload-Metadata")); err != nil {
+		return err
+	}
 	if offset == length {
 		// A failed final scan can leave every byte stored with finalization pending.
 		uploaded, raw, err := getDepotFile(c, path)
@@ -186,6 +195,46 @@ func resumeDepotUpload(c *client, file *os.File, size int64, id string, out, std
 		}
 	}
 	return finishDepotUpload(c, file, path, offset, length, out)
+}
+
+func depotUploadDigest(file *os.File, size int64) (string, error) {
+	hash := sha256.New()
+	n, err := io.Copy(hash, io.NewSectionReader(file, 0, size))
+	if err != nil {
+		return "", fmt.Errorf("hash upload file: %w", err)
+	}
+	if n != size {
+		return "", &usageError{"upload file size changed while hashing"}
+	}
+	return base64.StdEncoding.EncodeToString(hash.Sum(nil)), nil
+}
+
+func verifyDepotUploadFile(file *os.File, size int64, metadata string) error {
+	fields := make(map[string]string)
+	for entry := range strings.SplitSeq(metadata, ",") {
+		key, value, _ := strings.Cut(entry, " ")
+		fields[key] = value
+	}
+	if digest, ok := fields[depotTusDigestKey]; ok {
+		got, err := depotUploadDigest(file, size)
+		if err != nil {
+			return err
+		}
+		if got != digest {
+			return &usageError{"local file does not match the upload checksum"}
+		}
+		return nil
+	}
+	if encoded := fields["filename"]; encoded != "" {
+		name, err := base64.StdEncoding.Strict().DecodeString(encoded)
+		if err != nil {
+			return fmt.Errorf("depot: invalid resumable upload filename metadata")
+		}
+		if string(name) != filepath.Base(file.Name()) {
+			return &usageError{"local filename does not match the upload metadata"}
+		}
+	}
+	return nil
 }
 
 func finishDepotUpload(c *client, file *os.File, path string, offset, length int64, out io.Writer) error {

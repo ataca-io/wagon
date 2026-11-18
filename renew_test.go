@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,19 +26,40 @@ import (
 
 func TestAuthRenew(t *testing.T) {
 	tests := []struct {
-		name      string
-		expired   bool
-		jsonOut   bool
-		loseReply bool
-		redirect  bool
-		wrongKey  bool
-		wantErr   string
+		name       string
+		expired    bool
+		jsonOut    bool
+		loseReply  bool
+		redirect   bool
+		wrongKey   bool
+		changeCert func(*x509.Certificate)
+		wantErr    string
 	}{
 		{name: "rotate valid certificate"},
 		{name: "renew expired certificate", expired: true, jsonOut: true},
 		{name: "response lost after request", loseReply: true, wantErr: "key staged"},
 		{name: "refuse redirect", redirect: true, wantErr: "requires a direct connection"},
 		{name: "reject certificate for another key", wrongKey: true, wantErr: "validate renewed certificate"},
+		{
+			name: "reject future certificate", wantErr: "outside its validity period",
+			changeCert: func(cert *x509.Certificate) { cert.NotBefore = cert.NotAfter.Add(-time.Hour) },
+		},
+		{
+			name: "reject expired certificate", wantErr: "outside its validity period",
+			changeCert: func(cert *x509.Certificate) { cert.NotAfter = cert.NotBefore },
+		},
+		{
+			name: "reject certificate without client authentication", wantErr: "client authentication",
+			changeCert: func(cert *x509.Certificate) { cert.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth} },
+		},
+		{
+			name: "reject changed email SANs", wantErr: "email SANs changed",
+			changeCert: func(cert *x509.Certificate) { cert.EmailAddresses = []string{"other@example.com"} },
+		},
+		{
+			name: "reject changed webhook URI SANs", wantErr: "webhook URI SANs changed",
+			changeCert: func(cert *x509.Certificate) { cert.URIs = nil },
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -123,8 +145,12 @@ func TestAuthRenew(t *testing.T) {
 					NotBefore:      now.Add(-time.Minute),
 					NotAfter:       now.Add(48 * time.Hour),
 					EmailAddresses: pki.leaf.EmailAddresses,
+					URIs:           pki.leaf.URIs[:1],
 					KeyUsage:       x509.KeyUsageDigitalSignature,
 					ExtKeyUsage:    []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+				}
+				if tt.changeCert != nil {
+					tt.changeCert(cert)
 				}
 				der, err := x509.CreateCertificate(rand.Reader, cert, pki.ca, publicKey, pki.caKey)
 				if err != nil {
@@ -227,10 +253,14 @@ func newRenewalPKI(t *testing.T, now, expires time.Time) renewalPKI {
 		SerialNumber:   big.NewInt(2),
 		Subject:        pkix.Name{CommonName: "testclient"},
 		EmailAddresses: []string{"agent@example.com"},
-		NotBefore:      now.Add(-2 * time.Hour),
-		NotAfter:       expires,
-		KeyUsage:       x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:    []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		URIs: []*url.URL{
+			{Scheme: "https", Host: "hooks.example.com", Path: "/agent"},
+			{Scheme: "urn", Opaque: "example:legacy"},
+		},
+		NotBefore:   now.Add(-2 * time.Hour),
+		NotAfter:    expires,
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 	key := newKey(t)
 	leaf = createRenewalTestCertificate(t, leaf, ca, key, caKey)

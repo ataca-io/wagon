@@ -50,7 +50,7 @@ func runDepot(c *client, args []string, stdout, stderr io.Writer) error {
 	if c != nil {
 		owner := *c
 		hc := *c.http
-		hc.CheckRedirect = stopDepotRedirect
+		hc.CheckRedirect = stopRedirect
 		owner.http = &hc
 		c = &owner
 	}
@@ -67,10 +67,6 @@ func runDepot(c *client, args []string, stdout, stderr io.Writer) error {
 	default:
 		return &usageError{usage}
 	}
-}
-
-func stopDepotRedirect(_ *http.Request, _ []*http.Request) error {
-	return http.ErrUseLastResponse
 }
 
 func parseDepotFlags(fs *flag.FlagSet, args []string) error {
@@ -291,7 +287,7 @@ func downloadDepotFile(c *client, path string, out io.Writer) error {
 
 	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: c.caPool}}
 	defer transport.CloseIdleConnections()
-	hc := &http.Client{Transport: transport, CheckRedirect: stopDepotRedirect, Timeout: depotTransferTimeout}
+	hc := &http.Client{Transport: transport, CheckRedirect: stopRedirect, Timeout: depotTransferTimeout}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, link.String(), nil)
 	if err != nil {
 		return fmt.Errorf("depot: invalid download request")

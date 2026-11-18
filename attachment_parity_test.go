@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -20,7 +22,7 @@ func TestAttachmentRetryReusesUploads(t *testing.T) {
 	pki := mintClientCert(t)
 	var grants, uploads, sends int
 	var seen [][]string
-	depot := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	depot := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uploads++
 		if uploads == 2 {
 			jsonHandler(http.StatusServiceUnavailable, map[string]string{"error": "unavailable"})(w, r)
@@ -125,14 +127,14 @@ func TestAttachmentGrantBatches(t *testing.T) {
 	}
 }
 
-func TestAttachmentExpiredReceiptRetriesOnlyAfterRejection(t *testing.T) {
+func TestMixedAttachmentExpiredReceiptRetriesOnlyAfterRejection(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 	pki := mintClientCert(t)
 	var uploads, sends int
 	var seen [][]string
-	depot := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	depot := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uploads++
 		jsonHandler(http.StatusCreated, map[string]string{"id": fmt.Sprintf("file-%d", uploads)})(w, r)
 	}))
@@ -161,7 +163,8 @@ func TestAttachmentExpiredReceiptRetriesOnlyAfterRejection(t *testing.T) {
 		}
 	}), pki.clientCAs)
 	file := writeAttachFixture(t, "example.txt", "hello")
-	args := attachSendArgs(url, pki, ca, "--request-id", "expired-receipt", "--attach-file", file)
+	inline := writeAttachFixture(t, "inline.txt", "inline content")
+	args := attachSendArgs(url, pki, ca, "--request-id", "expired-receipt", "--attach-file", file, "--inline-file", inline)
 	var out, stderr bytes.Buffer
 	if exit := run(args, &out, &stderr); exit != 4 {
 		t.Fatalf("first attempt exit = %d, want 4, stderr = %s", exit, stderr.String())
@@ -184,5 +187,57 @@ func TestAttachmentExpiredReceiptRetriesOnlyAfterRejection(t *testing.T) {
 	}
 	if uploads != 2 || fmt.Sprint(seen) != "[[file-1] [file-1] [file-2]]" {
 		t.Errorf("uploads = %d, sent IDs = %v, want 2 uploads and [[file-1] [file-1] [file-2]]", uploads, seen)
+	}
+}
+
+func TestAttachmentRejectsRedirectFromRail(t *testing.T) {
+	file := writeAttachFixture(t, "example.txt", "attachment content")
+	for _, endpoint := range []string{"/api/v1/send", "/api/v1/upload-grants"} {
+		t.Run(endpoint, func(t *testing.T) {
+			var forwarded atomic.Int32
+			target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				forwarded.Add(1)
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(target.Close)
+			pki := mintClientCert(t)
+			rail, ca := newTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != endpoint {
+					t.Errorf("rail got path %q, want %q", r.URL.Path, endpoint)
+				}
+				http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+			}), pki.clientCAs)
+			fileFlag := "--inline-file"
+			if endpoint == "/api/v1/upload-grants" {
+				fileFlag = "--attach-file"
+			}
+			var out, stderr bytes.Buffer
+			if got := run(attachSendArgs(rail, pki, ca, fileFlag, file), &out, &stderr); got != 4 {
+				t.Errorf("exit = %d, want 4, stderr = %s", got, stderr.String())
+			}
+			if got := forwarded.Load(); got != 0 {
+				t.Errorf("redirect target received %d requests, want none", got)
+			}
+		})
+	}
+}
+
+func TestAttachmentRejectsHTTPGrant(t *testing.T) {
+	file := writeAttachFixture(t, "example.txt", "attachment content")
+	var uploads atomic.Int32
+	depot := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		uploads.Add(1)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(depot.Close)
+	pki := mintClientCert(t)
+	handler := jsonHandler(http.StatusCreated, map[string]string{"upload_url": depot.URL + "/u/fixture"})
+	rail, ca := newTLSServer(t, handler, pki.clientCAs)
+	var out, stderr bytes.Buffer
+	if got := run(attachSendArgs(rail, pki, ca, "--attach-file", file), &out, &stderr); got != 4 {
+		t.Errorf("exit = %d, want 4, stderr = %s", got, stderr.String())
+	}
+	if got := uploads.Load(); got != 0 || !strings.Contains(stderr.String(), "invalid HTTPS grant upload URL") {
+		t.Errorf("HTTP requests = %d, stderr = %q, want zero requests and the HTTPS error", got, stderr.String())
 	}
 }

@@ -126,7 +126,7 @@ func resolveAttachFiles(c *client, files []attachFile, out io.Writer) ([]string,
 		transport.TLSClientConfig = &tls.Config{RootCAs: c.caPool}
 		hc := &http.Client{
 			Timeout: attachUploadTimeout, Transport: transport,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+			CheckRedirect: stopRedirect,
 		}
 		for batch := range slices.Chunk(pending, maxFilesPerGrant) {
 			if err := uploadAttachBatch(c, hc, batch, out); err != nil {
@@ -192,8 +192,8 @@ func uploadAttachFile(hc *http.Client, uploadURL string, file *attachFile) (stri
 	}
 	name := filepath.Base(file.path)
 	u, err := url.Parse(uploadURL)
-	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
-		return "", &netError{fmt.Errorf("depot: invalid grant upload URL")}
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return "", &netError{fmt.Errorf("depot: invalid HTTPS grant upload URL")}
 	}
 	q := u.Query()
 	q.Set("filename", name)

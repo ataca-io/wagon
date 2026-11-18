@@ -96,7 +96,8 @@ func runSend(c *client, args []string, out, stderr io.Writer) error {
 }
 
 func sendWithAttachments(c *client, req sendRequest, uploads, inline []string, out io.Writer) error {
-	if len(req.Attachments)+len(uploads)+len(inline) > maxSendAttachments {
+	count := len(req.Attachments) + len(uploads) + len(inline)
+	if count > maxSendAttachments {
 		return &usageError{fmt.Sprintf("at most %d attachments are allowed", maxSendAttachments)}
 	}
 	for _, id := range req.Attachments {
@@ -110,6 +111,15 @@ func sendWithAttachments(c *client, req sendRequest, uploads, inline []string, o
 		return err
 	}
 	req.Files = files
+	if count > 0 {
+		// A redirect must not replay an inline file or offer the client certificate
+		// to a server the caller did not select.
+		h := *c.http
+		h.CheckRedirect = stopRedirect
+		direct := *c
+		direct.http = &h
+		c = &direct
+	}
 	receiptKey := req.RequestID
 	if req.RequestID == "" {
 		req.RequestID = randomRequestID()
@@ -127,7 +137,7 @@ func sendWithAttachments(c *client, req sendRequest, uploads, inline []string, o
 	req.Attachments = append(originalIDs, ids...)
 	err = postSend(c, req, out)
 	api, ok := errors.AsType[*apiError](err)
-	if !ok || api.status != http.StatusUnprocessableEntity || len(files) > 0 {
+	if !ok || api.status != http.StatusUnprocessableEntity {
 		return err
 	}
 	if api.code != "attachment_not_found" && api.code != "attachment_unavailable" {

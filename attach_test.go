@@ -82,7 +82,7 @@ type attachEnv struct {
 func newAttachEnv(t *testing.T) *attachEnv {
 	t.Helper()
 	env := &attachEnv{t: t, pki: mintClientCert(t)}
-	depotSrv := httptest.NewServer(attachDepotHandler(&env.uploadCalls, 0, nil))
+	depotSrv := httptest.NewTLSServer(attachDepotHandler(&env.uploadCalls, 0, nil))
 	t.Cleanup(depotSrv.Close)
 	env.url, env.caFile = newTLSServer(t,
 		attachRailHandler(&env.grantCalls, &env.sendCalls, &env.capturedGrant, &env.capturedSend, depotSrv.URL+"/u/tok1"),
@@ -194,7 +194,7 @@ func TestSendAttachFileUploadFailureAbortsSend(t *testing.T) {
 
 	var grantCalls, sendCalls, uploadCalls int
 	var capturedGrant, capturedSend map[string]any
-	depot := httptest.NewServer(attachDepotHandler(&uploadCalls, http.StatusUnprocessableEntity,
+	depot := httptest.NewTLSServer(attachDepotHandler(&uploadCalls, http.StatusUnprocessableEntity,
 		map[string]any{"error": "infected", "message": "malware detected"}))
 	t.Cleanup(depot.Close)
 	url, caFile := newTLSServer(t, attachRailHandler(&grantCalls, &sendCalls, &capturedGrant, &capturedSend, depot.URL+"/u/tok1"), pki.clientCAs)
@@ -259,7 +259,7 @@ func TestSendAttachFileMintFailureAbortsUpload(t *testing.T) {
 	pki := mintClientCert(t)
 
 	var uploadCalls int
-	depot := httptest.NewServer(attachDepotHandler(&uploadCalls, 0, nil))
+	depot := httptest.NewTLSServer(attachDepotHandler(&uploadCalls, 0, nil))
 	t.Cleanup(depot.Close)
 	url, caFile := newTLSServer(t, jsonHandler(http.StatusServiceUnavailable,
 		map[string]any{"error": "depot_unavailable", "message": "file uploads are temporarily unavailable"}), pki.clientCAs)

@@ -206,7 +206,7 @@ func TestDepotUpload(t *testing.T) {
 				case http.MethodPost:
 					if r.URL.Path != "/api/v1/files" || r.Header.Get("Tus-Resumable") != "1.0.0" ||
 						r.Header.Get("Upload-Length") != "3" || len(body) != 0 ||
-						r.Header.Get("Upload-Metadata") != "filename dGVzdCBmaWxlKy50eHQ=,filetype dGV4dC90ZXN0" {
+						r.Header.Get("Upload-Metadata") != "filename dGVzdCBmaWxlKy50eHQ=,filetype dGV4dC90ZXN0,wagon-sha256 ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=" {
 						t.Errorf("POST: URI = %s, headers = %v, body = %q", r.URL.RequestURI(), r.Header, body)
 					}
 					w.Header().Set("Location", uploadID)
@@ -265,16 +265,20 @@ func depotCalls(calls chan string) []string {
 func TestDepotResume(t *testing.T) {
 	path := depotTestFile(t, "abc")
 	for _, tt := range []struct {
-		name, length, offset, state, verdict string
-		methods                              []string
-		wantError                            string
+		name, length, offset, state, verdict, metadata string
+		methods                                        []string
+		wantError                                      string
 	}{
-		{"partial", "3", "1", "", "", []string{"HEAD", "PATCH", "GET"}, ""},
-		{"finalize", "3", "3", "pending_upload", "", []string{"HEAD", "GET", "PATCH", "GET"}, ""},
-		{"completed", "3", "3", "active", "", []string{"HEAD", "GET"}, ""},
-		{"infected", "3", "3", "quarantined", "infected", []string{"HEAD", "GET"}, "malware detected"},
-		{"length mismatch", "4", "1", "", "", []string{"HEAD"}, "local file has 3 bytes"},
-		{"invalid offset", "3", "4", "", "", []string{"HEAD"}, "invalid resumable upload offset"},
+		{"partial", "3", "1", "", "", "wagon-sha256 ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=", []string{"HEAD", "PATCH", "GET"}, ""},
+		{"same size edited", "3", "1", "", "", "wagon-sha256 pS0VnyYrLG3bckphhAvvw26zDIiHekAwtly+himESck=", []string{"HEAD"}, "local file does not match the upload checksum"},
+		{"legacy filename", "3", "1", "", "", "filename dGVzdCBmaWxlKy50eHQ=", []string{"HEAD", "PATCH", "GET"}, ""},
+		{"legacy wrong filename", "3", "1", "", "", "filename b3RoZXIudHh0", []string{"HEAD"}, "local filename does not match the upload metadata"},
+		{"legacy no filename", "3", "1", "", "", "", []string{"HEAD", "PATCH", "GET"}, ""},
+		{"finalize", "3", "3", "pending_upload", "", "", []string{"HEAD", "GET", "PATCH", "GET"}, ""},
+		{"completed", "3", "3", "active", "", "", []string{"HEAD", "GET"}, ""},
+		{"infected", "3", "3", "quarantined", "infected", "", []string{"HEAD", "GET"}, "malware detected"},
+		{"length mismatch", "4", "1", "", "", "", []string{"HEAD"}, "local file has 3 bytes"},
+		{"invalid offset", "3", "4", "", "", "", []string{"HEAD"}, "invalid resumable upload offset"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			calls := make(chan string, 5)
@@ -291,6 +295,9 @@ func TestDepotResume(t *testing.T) {
 					}
 					w.Header().Set("Upload-Length", tt.length)
 					w.Header().Set("Upload-Offset", tt.offset)
+					if tt.metadata != "" {
+						w.Header().Set("Upload-Metadata", tt.metadata)
+					}
 					w.WriteHeader(http.StatusNoContent)
 				case http.MethodPatch:
 					body, err := io.ReadAll(r.Body)
