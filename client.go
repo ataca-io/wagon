@@ -34,6 +34,7 @@ type client struct {
 	// senders are the certificate's email SANs, the From addresses rail
 	// accepts for this client.
 	senders []string
+	leaf    *x509.Certificate
 }
 
 // newClient loads the client certificate and optional CA, and builds the
@@ -70,6 +71,7 @@ func newClient(server, certFile, keyFile, caFile string, jsonOut bool) (*client,
 		jsonOut: jsonOut,
 		caPool:  caPool,
 		senders: cert.Leaf.EmailAddresses,
+		leaf:    cert.Leaf,
 	}, nil
 }
 

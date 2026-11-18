@@ -19,6 +19,7 @@ func runSendFile(c *client, args []string, out, stderr io.Writer) error {
 	subject := fs.String("subject", "", "subject (default: the file name, or \"N files\")")
 	text := fs.String("text", "", "plain-text body (default: \"Attached: \" and the file names)")
 	requestID := fs.String("request-id", "", "idempotency key (default: generated)")
+	inline := fs.Bool("inline", false, "send the files inline through rail")
 	var to, cc repeatedFlag
 	fs.Var(&to, "to", "recipient address (repeatable, required)")
 	fs.Var(&cc, "cc", "CC recipient address (repeatable)")
@@ -55,18 +56,17 @@ func runSendFile(c *client, args []string, out, stderr io.Writer) error {
 		defaultSubject = fmt.Sprintf("%d files", len(names))
 	}
 
-	uploadedIDs, err := resolveAttachFiles(c, files, out)
-	if err != nil {
-		return err
+	var inlineFiles []string
+	if *inline {
+		inlineFiles, files = files, nil
 	}
 
-	return postSend(c, sendRequest{
-		RequestID:   cmp.Or(*requestID, randomRequestID()),
-		From:        sender,
-		To:          to,
-		Cc:          cc,
-		Subject:     cmp.Or(*subject, defaultSubject),
-		BodyText:    cmp.Or(*text, "Attached: "+strings.Join(names, ", ")),
-		Attachments: uploadedIDs,
-	}, out)
+	return sendWithAttachments(c, sendRequest{
+		RequestID: *requestID,
+		From:      sender,
+		To:        to,
+		Cc:        cc,
+		Subject:   cmp.Or(*subject, defaultSubject),
+		BodyText:  cmp.Or(*text, "Attached: "+strings.Join(names, ", ")),
+	}, files, inlineFiles, out)
 }

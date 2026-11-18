@@ -35,7 +35,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("wagon", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { usage(stderr) }
-	server := fs.String("server", os.Getenv("RAIL_SERVER"), "rail server URL (env RAIL_SERVER, default "+defaultServer+")")
+	server := fs.String("server", os.Getenv("RAIL_SERVER"), "server URL (env RAIL_SERVER, rail default "+defaultServer+")")
 	certFile := fs.String("cert", os.Getenv("RAIL_CERT"), "client certificate file (env RAIL_CERT, default: the active identity's "+authCert+")")
 	keyFile := fs.String("key", os.Getenv("RAIL_KEY"), "client key file (env RAIL_KEY, default: the active identity's "+authKey+")")
 	caFile := fs.String("ca", os.Getenv("RAIL_CA"), "CA certificate file (env RAIL_CA, default: system pool)")
@@ -54,8 +54,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	verb, verbArgs := rest[0], rest[1:]
+	serverURL := cmp.Or(*server, defaultServer)
 
-	// These verbs run without a server or a certificate.
+	// Most local commands bypass certificate and client setup.
 	switch verb {
 	case "version":
 		_, _ = fmt.Fprintln(stdout, buildinfo.String("wagon"))
@@ -67,11 +68,41 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	case "auth":
+		if len(verbArgs) > 0 && verbArgs[0] == "renew" {
+			err := runAuthRenew(serverURL, *certFile, *keyFile, *caFile, *identity,
+				*jsonOut, verbArgs[1:], stdout, stderr)
+			if errors.Is(err, flag.ErrHelp) {
+				return 0
+			}
+			if err != nil {
+				_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+			}
+			return exitCode(err)
+		}
 		if err := runAuth(verbArgs, *identity, stdout); err != nil {
 			_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 			return 1
 		}
 		return 0
+	}
+
+	if verb == "depot" {
+		if len(verbArgs) == 0 {
+			_, _ = fmt.Fprintln(stderr, runDepot(nil, verbArgs, stdout, stderr))
+			return 1
+		}
+		if last := verbArgs[len(verbArgs)-1]; last == "-h" || last == "--help" {
+			// Only try the supported help forms without a configured client.
+			if len(verbArgs) <= 2 {
+				if err := runDepot(nil, verbArgs, stdout, stderr); errors.Is(err, flag.ErrHelp) {
+					return 0
+				}
+			}
+		}
+		if !visitedFlags(fs)["server"] || *server == "" {
+			_, _ = fmt.Fprintln(stderr, "error: depot requires --server with the depot URL")
+			return 1
+		}
 	}
 
 	cert, key, err := resolveKeys(*certFile, *keyFile, *identity)
@@ -80,7 +111,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	c, err := newClient(cmp.Or(*server, defaultServer), cert, key, *caFile, *jsonOut)
+	c, err := newClient(serverURL, cert, key, *caFile, *jsonOut)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
@@ -119,6 +150,8 @@ func dispatch(c *client, verb string, args []string, stdout, stderr io.Writer) e
 		return runEmailVerifications(c, args, stdout, stderr)
 	case "test":
 		return runTest(c, args, stdout, stderr)
+	case "depot":
+		return runDepot(c, args, stdout, stderr)
 	default:
 		return &usageError{fmt.Sprintf("unknown verb %q", verb)}
 	}
@@ -126,7 +159,7 @@ func dispatch(c *client, verb string, args []string, stdout, stderr io.Writer) e
 
 func usage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "Usage: wagon [--server URL] [--identity NAME] [--cert FILE] [--key FILE] [--ca FILE] [--json] <verb> [args]")
-	_, _ = fmt.Fprintln(w, "Verbs: whoami, send, send-file, message, messages, forms, domains, emails, email-verifications, test, auth, version, completion")
+	_, _ = fmt.Fprintln(w, "Verbs: whoami, send, send-file, message, messages, forms, domains, emails, email-verifications, test, auth, depot, version, completion")
 	_, _ = fmt.Fprintln(w, "Env fallbacks: RAIL_SERVER, RAIL_CERT, RAIL_KEY, RAIL_CA, WAGON_IDENTITY")
 	_, _ = fmt.Fprintln(w, "Defaults: --server "+defaultServer+", --cert and --key from the active identity in ~/.wagon (see `wagon auth setup`)")
 }

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-wagon is the client CLI for rail. It speaks to rail's `/who` and `/api/v1/*` over mTLS, and uploads attachments straight to depot through an upload grant. It is a single stdlib-only `main` package plus `internal/buildinfo`.
+wagon is the client CLI for rail. It uses mTLS for the rail API and depot's owner API. It uploads rail attachments to depot through rail-issued grants. It is a single stdlib-only `main` package plus `internal/buildinfo`.
 
 ```bash
 make build | test | lint | fmt

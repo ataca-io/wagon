@@ -9,20 +9,24 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
 )
+
+const maxSendAttachments = 20
 
 // sendRequest mirrors httpd's sendRequest (POST /api/v1/send).
 type sendRequest struct {
-	RequestID      string   `json:"request_id"`
-	From           string   `json:"from"`
-	To             []string `json:"to"`
-	Cc             []string `json:"cc,omitempty"`
-	Subject        string   `json:"subject"`
-	BodyText       string   `json:"body_text,omitempty"`
-	BodyHTML       string   `json:"body_html,omitempty"`
-	ReplyTo        string   `json:"reply_to,omitempty"`
-	UnsubscribeURL string   `json:"unsubscribe_url,omitempty"`
-	Attachments    []string `json:"attachments,omitempty"`
+	RequestID      string       `json:"request_id"`
+	From           string       `json:"from"`
+	To             []string     `json:"to"`
+	Cc             []string     `json:"cc,omitempty"`
+	Subject        string       `json:"subject"`
+	BodyText       string       `json:"body_text,omitempty"`
+	BodyHTML       string       `json:"body_html,omitempty"`
+	ReplyTo        string       `json:"reply_to,omitempty"`
+	UnsubscribeURL string       `json:"unsubscribe_url,omitempty"`
+	Attachments    []string     `json:"attachments,omitempty"`
+	Files          []inlineFile `json:"files,omitempty"`
 }
 
 // sendResponse mirrors httpd's sendResponse.
@@ -45,10 +49,12 @@ func runSend(c *client, args []string, out, stderr io.Writer) error {
 	replyTo := fs.String("reply-to", "", "override Reply-To")
 	unsubURL := fs.String("unsubscribe-url", "", "inject List-Unsubscribe headers")
 	requestID := fs.String("request-id", "", "idempotency key (default: generated)")
-	var to, cc, attachFiles repeatedFlag
+	var to, cc, attachFiles, attachIDs, inlineFiles repeatedFlag
 	fs.Var(&to, "to", "recipient address (repeatable, required)")
 	fs.Var(&cc, "cc", "CC recipient address (repeatable)")
 	fs.Var(&attachFiles, "attach-file", "local file path to upload as an attachment (repeatable)")
+	fs.Var(&attachIDs, "attachment-id", "file ID uploaded with a rail grant (repeatable)")
+	fs.Var(&inlineFiles, "inline-file", "local file path to send inline through rail (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
@@ -75,20 +81,8 @@ func runSend(c *client, args []string, out, stderr io.Writer) error {
 		return err
 	}
 
-	reqID := *requestID
-	if reqID == "" {
-		reqID = randomRequestID()
-	}
-
-	// A grant-and-upload failure must abort before the send, so the message
-	// never goes out with a partial attachment set.
-	uploadedIDs, err := resolveAttachFiles(c, attachFiles, out)
-	if err != nil {
-		return err
-	}
-
-	return postSend(c, sendRequest{
-		RequestID:      reqID,
+	return sendWithAttachments(c, sendRequest{
+		RequestID:      *requestID,
 		From:           sender,
 		To:             to,
 		Cc:             cc,
@@ -97,12 +91,72 @@ func runSend(c *client, args []string, out, stderr io.Writer) error {
 		BodyHTML:       *html,
 		ReplyTo:        *replyTo,
 		UnsubscribeURL: *unsubURL,
-		Attachments:    uploadedIDs,
-	}, out)
+		Attachments:    attachIDs,
+	}, attachFiles, inlineFiles, out)
+}
+
+func sendWithAttachments(c *client, req sendRequest, uploads, inline []string, out io.Writer) error {
+	if len(req.Attachments)+len(uploads)+len(inline) > maxSendAttachments {
+		return &usageError{fmt.Sprintf("at most %d attachments are allowed", maxSendAttachments)}
+	}
+	for _, id := range req.Attachments {
+		if !attachmentIDPattern.MatchString(id) {
+			return &usageError{fmt.Sprintf("invalid attachment ID %q", id)}
+		}
+	}
+
+	files, err := readInlineFiles(inline)
+	if err != nil {
+		return err
+	}
+	req.Files = files
+	receiptKey := req.RequestID
+	if req.RequestID == "" {
+		req.RequestID = randomRequestID()
+	}
+	local, err := prepareAttachFiles(c, receiptKey, uploads)
+	if err != nil {
+		return err
+	}
+
+	originalIDs := req.Attachments
+	ids, err := resolveAttachFiles(c, local, out)
+	if err != nil {
+		return err
+	}
+	req.Attachments = append(originalIDs, ids...)
+	err = postSend(c, req, out)
+	api, ok := errors.AsType[*apiError](err)
+	if !ok || api.status != http.StatusUnprocessableEntity || len(files) > 0 {
+		return err
+	}
+	if api.code != "attachment_not_found" && api.code != "attachment_unavailable" {
+		return err
+	}
+
+	// Try old receipts first so rail can deduplicate accepted sends even after
+	// their original upload TTL has elapsed. Refresh only a rejected send.
+	if !clearExpiredReceipts(local, time.Now()) {
+		return err
+	}
+	ids, err = resolveAttachFiles(c, local, out)
+	if err != nil {
+		return err
+	}
+	req.Attachments = append(originalIDs, ids...)
+	return postSend(c, req, out)
 }
 
 // postSend sends req to POST /api/v1/send and prints the response.
 func postSend(c *client, req sendRequest, out io.Writer) error {
+	if len(req.Attachments)+len(req.Files) > 0 {
+		// Inline uploads, scans, and attachment claims can outlast clientTimeout.
+		h := *c.http
+		h.Timeout = 6 * time.Minute
+		withAttachments := *c
+		withAttachments.http = &h
+		c = &withAttachments
+	}
 	var resp sendResponse
 	raw, err := c.do(http.MethodPost, "/api/v1/send", req, &resp)
 	if err != nil {
