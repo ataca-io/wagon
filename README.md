@@ -248,6 +248,10 @@ To check an address, run:
 wagon emails check user@example.com
 ```
 
+Add `--force` after the address to retry sooner when rail supports forced checks.
+Rail permits one SMTP probe per address per minute across all clients when using `--force`.
+Stronger evidence and probe eligibility rules still apply.
+
 The response reports routing, domain category, SMTP results, and delivery evidence.
 An HTTP `200` response produces exit code `0`, including assessments with `invalid`, `undeliverable`, or `unknown` status.
 For `unknown`/`recipient_accepted` with SMTP result `accepted`, human output adds an `assessment` row after `reason`:

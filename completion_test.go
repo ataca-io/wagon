@@ -36,6 +36,7 @@ func TestComplete(t *testing.T) {
 	}{
 		{"no words", nil, []string{"auth", "completion", "depot", "domains", "email-verifications", "emails", "forms", "message", "messages", "send", "send-file", "test", "version", "whoami"}},
 		{"email subcommands", []string{"emails", ""}, []string{"check"}},
+		{"email check flags", []string{"emails", "check", "person@example.com", "--"}, []string{"--force"}},
 		{"verification subcommands", []string{"email-verifications", ""}, []string{"confirm", "create", "get"}},
 		{"verification create flags", []string{"email-verifications", "create", "--"}, []string{"--email", "--from", "--purpose", "--request-id", "--subject-id"}},
 		{"verification confirm flags", []string{"email-verifications", "confirm", "id", "--"}, []string{"--code"}},
