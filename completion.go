@@ -49,7 +49,7 @@ var completionTree = completionSpec{
 	subs: map[string]completionSpec{
 		"whoami": {},
 		"emails": {subs: map[string]completionSpec{
-			"check": {},
+			"check": {flags: map[string]bool{"force": false}},
 		}},
 		"email-verifications": {subs: map[string]completionSpec{
 			"create": {flags: map[string]bool{

@@ -46,12 +46,14 @@ func runEmails(c *client, args []string, out, stderr io.Writer) error {
 	}
 	fs := flag.NewFlagSet("emails check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	force := fs.Bool("force", false, "retry an eligible cached SMTP probe")
 	if err := parseDomainFlags(fs, args[1:], "EMAIL"); err != nil {
 		return err
 	}
 	req := struct {
 		Email string `json:"email"`
-	}{Email: args[1]}
+		Force bool   `json:"force,omitempty"`
+	}{Email: args[1], Force: *force}
 	var resp emailCheckResponse
 	raw, err := c.do(http.MethodPost, "/api/v1/emails/check", req, &resp)
 	if err != nil {

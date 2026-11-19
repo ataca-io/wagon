@@ -34,6 +34,11 @@ func TestEmailAPICommands(t *testing.T) {
 			output: []string{"person@example.com", "no_delivery_evidence", "probe_disabled", "custom", "recipient_rejected:  unknown"},
 		},
 		{
+			name: "force check", args: []string{"emails", "check", "person@example.com", "--force"},
+			method: http.MethodPost, uri: "/api/v1/emails/check", body: `{"email":"person@example.com","force":true}`,
+			status: 200, response: emailCheckFixture, output: []string{"person@example.com", "probe_disabled"},
+		},
+		{
 			name: "create", args: []string{"email-verifications", "create", "--email", "person@example.com", "--purpose", "signup", "--subject-id", "account-123", "--request-id", "signup-123"},
 			method: http.MethodPost, uri: "/api/v1/email-verifications",
 			body:   `{"email":"person@example.com","from":"agent@example.com","purpose":"signup","subject_id":"account-123","request_id":"signup-123"}`,
